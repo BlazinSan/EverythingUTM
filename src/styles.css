@@ -2330,6 +2330,64 @@ textarea:focus {
   cursor: pointer;
 }
 
+.profile-crop-modal {
+  width: min(560px, 100%);
+}
+
+.profile-crop-body {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.profile-crop-body h2,
+.profile-crop-body p {
+  margin: 0;
+}
+
+.crop-frame {
+  position: relative;
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.45);
+}
+
+.crop-frame::after {
+  position: absolute;
+  inset: 14px;
+  pointer-events: none;
+  content: "";
+  border: 1px dashed rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+}
+
+.crop-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: center;
+}
+
+.crop-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.crop-controls label {
+  display: grid;
+  gap: 7px;
+  font-weight: 800;
+}
+
+.crop-controls input[type="range"] {
+  accent-color: var(--utm-red);
+}
+
 .profile-card-text h2,
 .profile-card-text p,
 .profile-card-text span,

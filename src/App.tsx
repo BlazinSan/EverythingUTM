@@ -821,6 +821,15 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+function loadImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not load image"));
+    image.src = src;
+  });
+}
+
 async function imageToShareFile(imageUrl: string, fileName: string) {
   try {
     const response = await fetch(imageUrl);
@@ -1738,7 +1747,7 @@ export default function App() {
     "forward",
   );
   const [authSession, setAuthSession] = useState<Session | null>(null);
-  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [authReady, setAuthReady] = useState(true);
   const [guestMode, setGuestMode] = useLocalStorageState(
     "everything-utm:guest-mode",
     false,
@@ -1887,6 +1896,11 @@ export default function App() {
   });
   const [selectedProfileName, setSelectedProfileName] = useState(profile.name);
   const [reviewDraft, setReviewDraft] = useState({ rating: "5", body: "" });
+  const [profileCropSource, setProfileCropSource] = useState("");
+  const [profileCropZoom, setProfileCropZoom] = useState(1);
+  const [profileCropOffsetX, setProfileCropOffsetX] = useState(0);
+  const [profileCropOffsetY, setProfileCropOffsetY] = useState(0);
+  const [profileCropSize, setProfileCropSize] = useState(320);
   const [deleteAccountArmed, setDeleteAccountArmed] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [bugReportDraft, setBugReportDraft] = useState("");
@@ -1896,6 +1910,7 @@ export default function App() {
   const voiceChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const lastProfileSetupUserIdRef = useRef<string | null>(null);
+  const requestFormRef = useRef<HTMLElement | null>(null);
 
   const profileData: Profile = { ...appUser, ...profile };
   const currentUserId = authSession?.user.id ?? localIdentity;
@@ -2798,22 +2813,6 @@ export default function App() {
           showNotice("Name is required to create an account", "error");
           return;
         }
-        const {
-          data: existingProfile,
-          error: existingProfileError,
-        } = await withTimeout(
-          supabase
-            .from("user_profiles")
-            .select("id")
-            .eq("email", authForm.email.trim().toLowerCase())
-            .maybeSingle(),
-          5_000,
-          "Email check took too long. Trying signup directly.",
-        ).catch(() => ({ data: null, error: null }));
-        if (!existingProfileError && existingProfile) {
-          showNotice("This email already has an EverythingUTM account", "error");
-          return;
-        }
 
         const { data, error } = await withTimeout(
           supabase.auth.signUp({
@@ -2827,7 +2826,7 @@ export default function App() {
               emailRedirectTo: `${window.location.origin}#profile`,
             },
           }),
-          15_000,
+          10_000,
           "Signup is taking too long. Supabase may be busy, please try again.",
         );
         if (error) {
@@ -2876,7 +2875,7 @@ export default function App() {
           email: authForm.email.trim(),
           password: authForm.password,
         }),
-        12_000,
+        8_000,
         "Sign in is taking too long. Supabase may be busy, please try again.",
       );
       if (error) {
@@ -2910,7 +2909,7 @@ export default function App() {
             skipBrowserRedirect: true,
           },
         }),
-        10_000,
+        6_000,
         "Google sign-in is taking too long. Please try again.",
       );
       if (error) {
@@ -2955,25 +2954,11 @@ export default function App() {
     setAuthAction("reset");
     try {
       const email = authForm.email.trim().toLowerCase();
-      const { data: existingProfile, error: profileLookupError } =
-        await withTimeout(
-          supabase
-            .from("user_profiles")
-            .select("id")
-            .eq("email", email)
-            .maybeSingle(),
-          5_000,
-          "Email lookup timed out.",
-        ).catch(() => ({ data: null, error: null }));
-      if (!profileLookupError && !existingProfile) {
-        showNotice("No EverythingUTM account is registered with that email", "error");
-        return;
-      }
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}#reset-password`,
         }),
-        12_000,
+        8_000,
         "Password reset is taking too long. Please try again.",
       );
       if (error) {
@@ -2986,7 +2971,9 @@ export default function App() {
         return;
       }
       setResetEmailSentAt(Date.now());
-      showNotice("Password reset email sent. Open the link to choose a new password.");
+      showNotice(
+        "If that email is registered, a reset link will be sent shortly.",
+      );
     } catch (error) {
       showNotice(
         error instanceof Error
@@ -4096,6 +4083,12 @@ export default function App() {
     setPickupMapLocationId("");
     setDropoffMapLocationId("");
     setRequestActionId(null);
+    window.requestAnimationFrame(() => {
+      requestFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
   }
 
   function cancelRequestEdit() {
@@ -4177,18 +4170,71 @@ export default function App() {
 
   function updateProfilePicture(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) {
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      setProfileDraft((current) => ({
-        ...current,
-        profilePicture: String(reader.result),
-      }));
-      showNotice("Profile picture ready to save");
+      setProfileCropSource(String(reader.result));
+      setProfileCropZoom(1);
+      setProfileCropOffsetX(0);
+      setProfileCropOffsetY(0);
+      setProfileCropSize(320);
     };
     reader.readAsDataURL(file);
+  }
+
+  async function applyProfilePictureCrop() {
+    if (!profileCropSource) {
+      return;
+    }
+    try {
+      const image = await loadImage(profileCropSource);
+      const cropSide =
+        Math.min(image.naturalWidth, image.naturalHeight) / profileCropZoom;
+      const maxLeft = Math.max(0, image.naturalWidth - cropSide);
+      const maxTop = Math.max(0, image.naturalHeight - cropSide);
+      const left = Math.min(
+        maxLeft,
+        Math.max(0, maxLeft / 2 + (profileCropOffsetX / 100) * (maxLeft / 2)),
+      );
+      const top = Math.min(
+        maxTop,
+        Math.max(0, maxTop / 2 + (profileCropOffsetY / 100) * (maxTop / 2)),
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = profileCropSize;
+      canvas.height = profileCropSize;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Image crop is not supported in this browser");
+      }
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, profileCropSize, profileCropSize);
+      context.drawImage(
+        image,
+        left,
+        top,
+        cropSide,
+        cropSide,
+        0,
+        0,
+        profileCropSize,
+        profileCropSize,
+      );
+      setProfileDraft((current) => ({
+        ...current,
+        profilePicture: canvas.toDataURL("image/jpeg", 0.88),
+      }));
+      setProfileCropSource("");
+      showNotice("Cropped profile picture ready to save");
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Could not crop profile picture",
+        "error",
+      );
+    }
   }
 
   function saveProfile() {
@@ -5789,6 +5835,121 @@ export default function App() {
           </div>
         )}
 
+        {profileCropSource && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => setProfileCropSource("")}
+          >
+            <section
+              className="detail-modal profile-crop-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Crop profile picture"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                className="icon-button modal-close"
+                type="button"
+                title="Close"
+                onClick={() => setProfileCropSource("")}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+              <div className="profile-crop-body">
+                <div>
+                  <p className="eyebrow">Profile photo</p>
+                  <h2>Crop your picture</h2>
+                  <p className="muted">
+                    Adjust the photo before saving it to your profile.
+                  </p>
+                </div>
+                <div className="crop-frame">
+                  <img
+                    src={profileCropSource}
+                    alt=""
+                    style={{
+                      objectPosition: `${50 + profileCropOffsetX / 2}% ${
+                        50 + profileCropOffsetY / 2
+                      }%`,
+                      transform: `scale(${profileCropZoom})`,
+                    }}
+                  />
+                </div>
+                <div className="crop-controls">
+                  <label>
+                    <span>Zoom</span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="3"
+                      step="0.05"
+                      value={profileCropZoom}
+                      onChange={(event) =>
+                        setProfileCropZoom(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Horizontal position</span>
+                    <input
+                      type="range"
+                      min="-100"
+                      max="100"
+                      value={profileCropOffsetX}
+                      onChange={(event) =>
+                        setProfileCropOffsetX(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Vertical position</span>
+                    <input
+                      type="range"
+                      min="-100"
+                      max="100"
+                      value={profileCropOffsetY}
+                      onChange={(event) =>
+                        setProfileCropOffsetY(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Preferred size</span>
+                    <select
+                      value={profileCropSize}
+                      onChange={(event) =>
+                        setProfileCropSize(Number(event.target.value))
+                      }
+                    >
+                      <option value={160}>Small - 160 px</option>
+                      <option value={320}>Balanced - 320 px</option>
+                      <option value={512}>Large - 512 px</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="card-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={applyProfilePictureCrop}
+                  >
+                    <Check size={16} aria-hidden="true" />
+                    Apply crop
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => setProfileCropSource("")}
+                  >
+                    {t("cancel")}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
         {mapPickerField && (
           <div
             className="modal-backdrop"
@@ -6927,7 +7088,7 @@ export default function App() {
             </div>
 
             <div className="requests-layout">
-              <section className="panel request-form-panel">
+              <section className="panel request-form-panel" ref={requestFormRef}>
                 <div className="panel-heading">
                   <h2>{editingRequestId ? "Edit request" : "Post request"}</h2>
                   <CarFront size={18} aria-hidden="true" />
@@ -7252,7 +7413,12 @@ export default function App() {
                         </p>
                       )}
                       {requestActionId === request.id && (
-                        <div className="message-actions request-actions">
+                        <div
+                          className="message-actions request-actions"
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onPointerUp={(event) => event.stopPropagation()}
+                        >
                           {isCurrentUserEntity(
                             request.requesterId,
                             request.requester,
@@ -7310,7 +7476,12 @@ export default function App() {
                           Matched with {request.driver}
                         </button>
                       )}
-                      <div className="card-actions">
+                      <div
+                        className="card-actions"
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onPointerUp={(event) => event.stopPropagation()}
+                      >
                         {isCurrentUserEntity(
                           request.requesterId,
                           request.requester,
