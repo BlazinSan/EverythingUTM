@@ -2371,6 +2371,8 @@ textarea:focus {
   height: 100%;
   object-fit: cover;
   transform-origin: center;
+  transition: transform 0.16s ease;
+  will-change: transform;
 }
 
 .crop-controls {

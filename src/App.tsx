@@ -768,6 +768,102 @@ function hashForModule(module: ModuleKey) {
   return `#${moduleSlugs[module]}`;
 }
 
+function isSupabaseAuthHash(hash = window.location.hash) {
+  const value = hash.replace(/^#/, "");
+  return (
+    value.includes("access_token=") ||
+    value.includes("refresh_token=") ||
+    value.includes("provider_token=") ||
+    value.includes("type=recovery") ||
+    value.includes("error=")
+  );
+}
+
+function authReturnTarget() {
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get("next");
+  if (next === "profile") {
+    return "profile";
+  }
+  if (next === "reset-password") {
+    return "reset-password";
+  }
+  if (
+    params.get("type") === "recovery" ||
+    window.location.hash.includes("reset-password") ||
+    window.location.hash.includes("type=recovery")
+  ) {
+    return "reset-password";
+  }
+  if (params.has("code") || params.get("auth") === "callback" || isSupabaseAuthHash()) {
+    return "profile";
+  }
+  return null;
+}
+
+function hasAllowedSearchParams() {
+  const allowed = new Set([
+    "auth",
+    "code",
+    "error",
+    "error_code",
+    "error_description",
+    "listing",
+    "next",
+    "type",
+  ]);
+  return Array.from(new URLSearchParams(window.location.search).keys()).every(
+    (key) => allowed.has(key),
+  );
+}
+
+function isKnownHash(hash = window.location.hash) {
+  if (!hash) {
+    return true;
+  }
+  if (isSupabaseAuthHash(hash) || hash.includes("reset-password")) {
+    return true;
+  }
+  return Boolean(moduleFromHash(hash));
+}
+
+function isInvalidAppRoute() {
+  const validPath =
+    window.location.pathname === "/" || window.location.pathname === "/index.html";
+  return !validPath || !hasAllowedSearchParams() || !isKnownHash();
+}
+
+function sanitizePhoneInput(value: string) {
+  return value.replace(/\D/g, "").slice(0, 16);
+}
+
+function consumeRateLimit(key: string, maxHits: number, windowMs: number) {
+  const now = Date.now();
+  try {
+    const hits = JSON.parse(window.localStorage.getItem(key) || "[]") as number[];
+    const recentHits = hits.filter((time) => now - time < windowMs);
+    if (recentHits.length >= maxHits) {
+      const oldest = Math.min(...recentHits);
+      return {
+        allowed: false,
+        waitMs: Math.max(0, windowMs - (now - oldest)),
+      };
+    }
+    window.localStorage.setItem(key, JSON.stringify([...recentHits, now]));
+    return { allowed: true, waitMs: 0 };
+  } catch {
+    return { allowed: true, waitMs: 0 };
+  }
+}
+
+function formatWaitTime(waitMs: number) {
+  const minutes = Math.ceil(waitMs / 60_000);
+  if (minutes <= 1) {
+    return "about 1 minute";
+  }
+  return `${minutes} minutes`;
+}
+
 function normalize(value: string) {
   return value.trim().toLowerCase();
 }
@@ -1747,7 +1843,10 @@ export default function App() {
     "forward",
   );
   const [authSession, setAuthSession] = useState<Session | null>(null);
-  const [authReady, setAuthReady] = useState(true);
+  const [routeNotFound, setRouteNotFound] = useState(() => isInvalidAppRoute());
+  const [authReady, setAuthReady] = useState(
+    () => !isSupabaseConfigured || !authReturnTarget(),
+  );
   const [guestMode, setGuestMode] = useLocalStorageState(
     "everything-utm:guest-mode",
     false,
@@ -2001,12 +2100,8 @@ export default function App() {
       return;
     }
     let mounted = true;
-    const recoveryRequested =
-      new URLSearchParams(window.location.search).get("type") === "recovery" ||
-      new URLSearchParams(window.location.hash.replace(/^#/, "?")).get("type") ===
-        "recovery" ||
-      window.location.hash.includes("reset-password");
-    if (recoveryRequested) {
+    const returnTarget = authReturnTarget();
+    if (returnTarget === "reset-password") {
       setPasswordRecoveryMode(true);
       setAuthMode("signin");
     }
@@ -2021,6 +2116,12 @@ export default function App() {
         }
         setAuthSession(data.session);
         setAuthReady(true);
+        if (data.session && returnTarget === "profile") {
+          setRouteNotFound(false);
+          setActiveModuleState("profile");
+          setPageDirection("forward");
+          window.history.replaceState(null, "", hashForModule("profile"));
+        }
       })
       .catch((error: unknown) => {
         if (!mounted) {
@@ -2042,6 +2143,15 @@ export default function App() {
       setAuthReady(true);
       if (session) {
         setGuestMode(false);
+      }
+      if (
+        session &&
+        (_event === "SIGNED_IN" || authReturnTarget() === "profile")
+      ) {
+        setRouteNotFound(false);
+        setActiveModuleState("profile");
+        setPageDirection("forward");
+        window.history.replaceState(null, "", hashForModule("profile"));
       }
       if (_event === "PASSWORD_RECOVERY") {
         setPasswordRecoveryMode(true);
@@ -2104,17 +2214,29 @@ export default function App() {
   }, [profile]);
 
   useEffect(() => {
-    if (!window.location.hash) {
-      window.history.replaceState(null, "", hashForModule(activeModule));
-    }
-    const handleHashChange = () => {
+    const syncRoute = () => {
+      const invalid = isInvalidAppRoute();
+      setRouteNotFound(invalid);
+      if (invalid) {
+        return;
+      }
       const module = moduleFromHash();
       if (module && module !== activeModule) {
         setActiveModuleState(module);
       }
     };
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+
+    syncRoute();
+
+    if (!window.location.hash && !isInvalidAppRoute()) {
+      window.history.replaceState(null, "", hashForModule(activeModule));
+    }
+    window.addEventListener("hashchange", syncRoute);
+    window.addEventListener("popstate", syncRoute);
+    return () => {
+      window.removeEventListener("hashchange", syncRoute);
+      window.removeEventListener("popstate", syncRoute);
+    };
   }, [activeModule]);
 
   useEffect(() => {
@@ -2749,9 +2871,10 @@ export default function App() {
       nextIndex >= activeModuleIndex || nextIndex === -1 ? "forward" : "back",
     );
     setActiveModuleState(module);
+    setRouteNotFound(false);
     const nextHash = hashForModule(module);
-    if (window.location.hash !== nextHash) {
-      window.history.pushState(null, "", nextHash);
+    if (window.location.pathname !== "/" || window.location.hash !== nextHash) {
+      window.history.pushState(null, "", `/${nextHash}`);
     }
   }
 
@@ -2828,7 +2951,7 @@ export default function App() {
                 name: authForm.name.trim(),
                 sex: authForm.sex,
               },
-              emailRedirectTo: `${window.location.origin}/#profile`,
+              emailRedirectTo: `${window.location.origin}/?next=profile`,
             },
           }),
           10_000,
@@ -2910,7 +3033,7 @@ export default function App() {
         supabase.auth.signInWithOAuth({
           provider: "google",
           options: {
-            redirectTo: `${window.location.origin}/#profile`,
+            redirectTo: `${window.location.origin}/?next=profile`,
             skipBrowserRedirect: true,
           },
         }),
@@ -2961,7 +3084,7 @@ export default function App() {
       const email = authForm.email.trim().toLowerCase();
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/#reset-password`,
+          redirectTo: `${window.location.origin}/?next=reset-password&type=recovery`,
         }),
         8_000,
         "Password reset is taking too long. Please try again.",
@@ -4243,7 +4366,10 @@ export default function App() {
   }
 
   function saveProfile() {
-    const nextProfile = { ...profileDraft };
+    const nextProfile = {
+      ...profileDraft,
+      contactNumber: sanitizePhoneInput(profileDraft.contactNumber),
+    };
     setMarketplace((current) =>
       current.map((item) =>
         isCurrentUserEntity(item.sellerId, item.seller)
@@ -4351,44 +4477,12 @@ export default function App() {
     showNotice("Review posted");
   }
 
-  function withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    message: string,
-  ): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        window.setTimeout(() => reject(new Error(message)), timeoutMs);
-      }),
-    ]);
-  }
-
   async function deleteAccountOnline() {
     if (!supabase || !authSession) {
       throw new Error("Sign in before deleting your online account");
     }
 
-    const rpcResult = await withTimeout(
-      Promise.resolve(supabase.rpc("delete_everythingutm_current_user")),
-      12000,
-      "Delete RPC timed out",
-    ).catch(() => null);
-
-    if (rpcResult && !rpcResult.error) {
-      return;
-    }
-
-    const edgeResult = await withTimeout(
-      supabase.functions.invoke("delete-account"),
-      15000,
-      "Delete account Edge Function timed out",
-    ).catch((error: unknown) => ({ data: null, error }));
-
-    if (!edgeResult.error && edgeResult.data?.ok === true) {
-      return;
-    }
-
+    let lastError = "Online account deletion failed";
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
@@ -4404,25 +4498,51 @@ export default function App() {
       }).catch(() => null);
 
       if (!response) {
-        throw new Error(
-          edgeResult.error instanceof Error
-            ? edgeResult.error.message
-            : "Online account deletion service is unavailable",
-        );
+        throw new Error("Online account deletion service is unavailable");
       }
 
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok || payload?.ok !== true) {
         throw new Error(
-          payload?.reason ||
-            (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
-            "Online account deletion failed",
+          payload?.reason || "Online account deletion failed",
         );
       }
+      return;
+    } catch (error) {
+      lastError =
+        error instanceof Error ? error.message : "Online account deletion failed";
     } finally {
       window.clearTimeout(timeoutId);
     }
+
+    const edgeResult = await withTimeout(
+      supabase.functions.invoke("delete-account"),
+      15000,
+      "Delete account Edge Function timed out",
+    ).catch((error: unknown) => ({ data: null, error }));
+
+    if (!edgeResult.error && edgeResult.data?.ok === true) {
+      return;
+    }
+
+    if (edgeResult.error instanceof Error) {
+      lastError = edgeResult.error.message;
+    } else if (edgeResult.data?.reason) {
+      lastError = edgeResult.data.reason;
+    }
+
+    const rpcResult = await withTimeout(
+      Promise.resolve(supabase.rpc("delete_everythingutm_current_user")),
+      12000,
+      "Delete RPC timed out",
+    ).catch((error: unknown) => ({ error }));
+
+    if (rpcResult && !rpcResult.error) {
+      return;
+    }
+
+    throw new Error(lastError);
   }
 
   async function deleteLocalAccount() {
@@ -4436,6 +4556,19 @@ export default function App() {
 
     if (deleteConfirmText !== "DELETE") {
       showNotice('Type DELETE to confirm account deletion', "error");
+      return;
+    }
+
+    const rate = consumeRateLimit(
+      `everything-utm:rate:delete:${authSession?.user.id ?? "anon"}`,
+      2,
+      10 * 60_000,
+    );
+    if (!rate.allowed) {
+      showNotice(
+        `Please wait ${formatWaitTime(rate.waitMs)} before trying account deletion again.`,
+        "error",
+      );
       return;
     }
 
@@ -4471,6 +4604,19 @@ export default function App() {
 
     if (!bugReportDraft.trim()) {
       showNotice("Bug report needs details", "error");
+      return;
+    }
+
+    const rate = consumeRateLimit(
+      `everything-utm:rate:bug:${authSession?.user.id ?? authSession?.user.email ?? "anon"}`,
+      3,
+      10 * 60_000,
+    );
+    if (!rate.allowed) {
+      showNotice(
+        `Please wait ${formatWaitTime(rate.waitMs)} before sending another bug report.`,
+        "error",
+      );
       return;
     }
 
@@ -4528,6 +4674,33 @@ export default function App() {
       };
 
       const sendBugReportEmail = async () => {
+        let lastError = "Bug report email failed";
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
+        try {
+          const response = await fetch("/.netlify/functions/report-bug", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          }).catch(() => null);
+          if (response) {
+            const responsePayload = await response.json().catch(() => ({}));
+            if (response.ok && responsePayload?.ok === true) {
+              return;
+            }
+            throw new Error(
+              responsePayload?.reason ||
+                "Bug report email failed",
+            );
+          }
+        } catch (error) {
+          lastError =
+            error instanceof Error ? error.message : "Bug report email failed";
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+
         const edgeResult = await withTimeout(
           supabaseClient.functions.invoke("report-bug", { body: payload }),
           20000,
@@ -4541,7 +4714,7 @@ export default function App() {
         throw new Error(
           edgeResult.error instanceof Error
             ? edgeResult.error.message
-            : edgeResult.data?.reason || "Bug report email failed",
+            : edgeResult.data?.reason || lastError,
         );
       };
 
@@ -4572,6 +4745,44 @@ export default function App() {
     } finally {
       setBugReportLoading(false);
     }
+  }
+
+  if (routeNotFound) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="brand auth-brand">
+            <div className="brand-mark" aria-hidden="true">
+              <img src="/everythingutm-icon.png" alt="" />
+            </div>
+            <div>
+              <p>EverythingUTM</p>
+              <span>UTM Skudai campus hub</span>
+            </div>
+          </div>
+          <div>
+            <p className="eyebrow">404</p>
+            <h1>Page not found</h1>
+            <p className="muted">
+              This EverythingUTM page does not exist or is not accessible.
+            </p>
+          </div>
+          <button
+            className="primary-button full-width"
+            type="button"
+            onClick={() => {
+              setRouteNotFound(false);
+              setActiveModuleState("home");
+              setPageDirection("back");
+              window.history.replaceState(null, "", `/${hashForModule("home")}`);
+            }}
+          >
+            <Home size={17} aria-hidden="true" />
+            Go home
+          </button>
+        </section>
+      </div>
+    );
   }
 
   if (!authReady) {
@@ -5918,13 +6129,15 @@ export default function App() {
                     src={profileCropSource}
                     alt=""
                     style={{
-                      objectPosition: `${50 + profileCropOffsetX / 2}% ${
-                        50 + profileCropOffsetY / 2
-                      }%`,
-                      transform: `scale(${profileCropZoom})`,
+                      transform: `translate(${profileCropOffsetX / 4}%, ${
+                        profileCropOffsetY / 4
+                      }%) scale(${profileCropZoom})`,
                     }}
                   />
                 </div>
+                <p className="fine-print">
+                  Output size: {profileCropSize} x {profileCropSize}px
+                </p>
                 <div className="crop-controls">
                   <label>
                     <span>Zoom</span>
@@ -7862,11 +8075,13 @@ export default function App() {
                           Contact number
                         </span>
                         <input
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={profileDraft.contactNumber}
                           onChange={(event) =>
                             setProfileDraft((current) => ({
                               ...current,
-                              contactNumber: event.target.value,
+                              contactNumber: sanitizePhoneInput(event.target.value),
                             }))
                           }
                         />

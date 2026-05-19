@@ -21,6 +21,21 @@ async function supabaseFetch(path, options = {}) {
   return fetch(url, options);
 }
 
+const rateBuckets = globalThis.__everythingutmDeleteAccountRateBuckets ?? new Map();
+globalThis.__everythingutmDeleteAccountRateBuckets = rateBuckets;
+
+function rateLimited(id, maxHits = 2, windowMs = 10 * 60 * 1000) {
+  const now = Date.now();
+  const hits = (rateBuckets.get(id) || []).filter((time) => now - time < windowMs);
+  if (hits.length >= maxHits) {
+    const waitMs = windowMs - (now - Math.min(...hits));
+    rateBuckets.set(id, hits);
+    return { limited: true, waitMs };
+  }
+  rateBuckets.set(id, [...hits, now]);
+  return { limited: false, waitMs: 0 };
+}
+
 export async function handler(event) {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: corsHeaders, body: "" };
@@ -38,6 +53,13 @@ export async function handler(event) {
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   if (!accessToken) {
     return json(401, { ok: false, reason: "Missing signed-in session" });
+  }
+  const rate = rateLimited(accessToken.slice(-32) || "unknown");
+  if (rate.limited) {
+    return json(429, {
+      ok: false,
+      reason: `Too many account deletion attempts. Try again in ${Math.ceil(rate.waitMs / 60000)} minute(s).`,
+    });
   }
   if (!anonKey) {
     return json(500, {

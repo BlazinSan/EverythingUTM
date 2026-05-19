@@ -28,6 +28,30 @@ function safeReplyEmail(value) {
     : "unknown@everythingutm.app";
 }
 
+const rateBuckets = globalThis.__everythingutmBugReportRateBuckets ?? new Map();
+globalThis.__everythingutmBugReportRateBuckets = rateBuckets;
+
+function clientId(event, body) {
+  return (
+    safeReplyEmail(body.userEmail) ||
+    event.headers["x-nf-client-connection-ip"] ||
+    event.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+function rateLimited(id, maxHits = 3, windowMs = 10 * 60 * 1000) {
+  const now = Date.now();
+  const hits = (rateBuckets.get(id) || []).filter((time) => now - time < windowMs);
+  if (hits.length >= maxHits) {
+    const waitMs = windowMs - (now - Math.min(...hits));
+    rateBuckets.set(id, hits);
+    return { limited: true, waitMs };
+  }
+  rateBuckets.set(id, [...hits, now]);
+  return { limited: false, waitMs: 0 };
+}
+
 async function sendWithFormSubmit({ toEmail, body, submittedAt, details }) {
   const response = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
     method: "POST",
@@ -61,6 +85,13 @@ export async function handler(event) {
   const details = String(body.details || "").trim();
   if (!details) {
     return json(400, { ok: false, reason: "Missing bug details" });
+  }
+  const rate = rateLimited(clientId(event, body));
+  if (rate.limited) {
+    return json(429, {
+      ok: false,
+      reason: `Too many bug reports. Try again in ${Math.ceil(rate.waitMs / 60000)} minute(s).`,
+    });
   }
 
   const fromEmail =
