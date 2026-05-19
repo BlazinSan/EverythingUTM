@@ -12,24 +12,58 @@ Deno.serve(async (request) => {
 
   const authHeader = request.headers.get("Authorization") ?? "";
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
+
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+    return new Response(
+      JSON.stringify({ ok: false, reason: "Supabase deletion secrets are missing" }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
   const {
     data: { user },
     error,
-  } = await admin.auth.getUser(authHeader.replace("Bearer ", ""));
+  } = await userClient.auth.getUser();
 
   if (error || !user) {
-    return new Response(JSON.stringify({ ok: false }), {
+    return new Response(JSON.stringify({ ok: false, reason: "Invalid session" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
+  const namespace = Deno.env.get("VITE_SUPABASE_NAMESPACE") ||
+    Deno.env.get("SUPABASE_NAMESPACE") ||
+    "everythingutm-production";
+
   await admin.from("user_profiles").delete().eq("id", user.id);
-  await admin.auth.admin.deleteUser(user.id);
+  await admin
+    .from("app_state")
+    .delete()
+    .eq("namespace", namespace)
+    .eq("storage_key", `everything-utm:user-profile:${user.id}`);
+
+  const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
+  if (deleteError) {
+    return new Response(
+      JSON.stringify({ ok: false, reason: deleteError.message }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
+  }
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,

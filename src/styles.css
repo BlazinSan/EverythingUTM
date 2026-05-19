@@ -563,6 +563,16 @@ img {
   animation: pageForward 0.28s ease both;
 }
 
+.chat-module {
+  min-height: calc(100dvh - 132px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.chat-module .chat-panel {
+  height: 100%;
+  min-height: 0;
+}
+
 .main-content[data-page-direction="back"] .module {
   animation-name: pageBack;
 }
@@ -706,6 +716,17 @@ img {
 .metric-card {
   padding: 16px;
   min-height: 116px;
+}
+
+.metric-button {
+  width: 100%;
+  color: var(--text);
+  text-align: left;
+}
+
+.metric-button:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
 }
 
 .metric-card > svg {
@@ -999,6 +1020,23 @@ textarea:focus {
   overflow: hidden;
 }
 
+.product-card.is-sold,
+.listing-detail-modal.is-sold {
+  background: #eef0f2;
+}
+
+.product-card.is-sold img,
+.listing-detail-modal.is-sold .listing-modal-image img {
+  filter: grayscale(0.72);
+}
+
+.sold-pill {
+  width: fit-content;
+  color: #5f6570;
+  background: rgba(95, 101, 112, 0.14);
+  border-color: rgba(95, 101, 112, 0.24);
+}
+
 .clickable-card {
   cursor: pointer;
 }
@@ -1276,8 +1314,8 @@ textarea:focus {
 .chat-panel {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: min(760px, calc(100dvh - 210px));
-  min-height: 520px;
+  height: calc(100dvh - 190px);
+  min-height: 560px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--line);
@@ -1813,6 +1851,12 @@ textarea:focus {
   display: flex;
   gap: 8px;
   color: var(--text);
+}
+
+.map-action-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .payment-detail-panel {
@@ -2723,6 +2767,14 @@ textarea:focus {
   color: #ffd8df;
 }
 
+:root[data-theme="dark"] .product-card.is-sold,
+:root[data-theme="dark"] .listing-detail-modal.is-sold,
+:root[data-theme="dark"] .sold-pill {
+  color: #d2d7df;
+  background: #242a31;
+  border-color: #3a434d;
+}
+
 :root[data-theme="dark"] .tag-row span,
 :root[data-theme="dark"] .best-for span,
 :root[data-theme="dark"] .segmented-control {
@@ -2898,8 +2950,66 @@ textarea:focus {
 }
 
 @media (max-width: 980px) {
+  .app-shell {
+    display: block;
+    padding-bottom: 92px;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 920;
+    height: auto;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    overflow: hidden;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+    border-right: 0;
+    box-shadow: 0 -18px 40px rgba(34, 32, 39, 0.22);
+  }
+
+  .sidebar .brand,
+  .sidebar-summary {
+    display: none;
+  }
+
+  .nav-list {
+    display: flex;
+    grid-template-columns: none;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px 2px 5px;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .nav-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-item {
+    flex: 0 0 88px;
+    scroll-snap-align: start;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    min-height: 52px;
+    padding: 8px 6px;
+    gap: 5px;
+  }
+
+  .nav-item span {
+    display: block;
+    max-width: 100%;
+    font-size: 11px;
+    line-height: 1.1;
+    text-align: center;
+  }
+
   .main-content {
-    padding: 18px;
+    padding: 18px 18px 112px;
   }
 
   .topbar,
@@ -2958,6 +3068,30 @@ textarea:focus {
 
   .profile-reviews-panel {
     grid-column: auto;
+  }
+
+  .map-action-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-module {
+    min-height: calc(100dvh - 220px);
+  }
+
+  .chat-panel {
+    height: calc(100dvh - 172px);
+    min-height: 520px;
+    margin-bottom: 6px;
+  }
+
+  .chat-composer {
+    position: sticky;
+    bottom: 0;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+  }
+
+  .voice-preview {
+    grid-template-columns: 1fr;
   }
 }
 

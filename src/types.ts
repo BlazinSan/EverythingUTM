@@ -42,6 +42,8 @@ export type MarketplaceItem = {
   images?: string[];
   tags: string[];
   createdAt: string;
+  sold?: boolean;
+  soldAt?: string;
 };
 
 export type CampusLocation = {

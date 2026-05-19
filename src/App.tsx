@@ -797,6 +797,7 @@ function listingShareText(item: MarketplaceItem) {
     `EverythingUTM Marketplace`,
     `${item.title}`,
     `${formatListingPrice(item.price)} · ${item.condition} · ${item.fulfillment ?? "Pickup"}`,
+    item.sold ? "Status: Sold" : "Status: Available",
     `Pickup/area: ${item.location}`,
     `Seller: ${item.seller}`,
     item.description,
@@ -806,6 +807,12 @@ function listingShareText(item: MarketplaceItem) {
 
 function googleMapsUrlFor(lat: number, lng: number) {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+function googleMapsSearchUrl(query: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    query.trim() || "Universiti Teknologi Malaysia Skudai Johor Bahru",
+  )}`;
 }
 
 const busStopTimeOverrides: Record<string, Record<string, string[]>> = {
@@ -1661,17 +1668,18 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
+  const lastProfileSetupUserIdRef = useRef<string | null>(null);
 
   const profileData: Profile = { ...appUser, ...profile };
   const currentUserId = authSession?.user.id ?? localIdentity;
   const currentDisplayName =
-    profileData.name.trim() || (isSupabaseConfigured && authSession ? "New UTM user" : "Guest");
+    profileData.name.trim() || "New UTM user";
   const appSettings: AppSettings = {
     ...defaultSettings,
     ...settings,
   };
   const isSignedIn = Boolean(authSession);
-  const canUseApp = guestMode || isSignedIn || !isSupabaseConfigured;
+  const canUseApp = isSignedIn || !isSupabaseConfigured;
   const t = (key: string) =>
     uiText[appSettings.language]?.[key] ?? uiText.en[key] ?? key;
   const search = normalize(query);
@@ -1720,6 +1728,12 @@ export default function App() {
       selectedProfile.name === profileData.name) ||
     (!!selectedProfile.matricNumber &&
       selectedProfile.matricNumber === profileData.matricNumber);
+  const hasUnsavedProfileChanges = useMemo(
+    () => JSON.stringify(profileDraft) !== JSON.stringify(profileData),
+    [profileDraft, profileData],
+  );
+  const shouldGuardProfileDraft =
+    activeModule === "profile" && viewingOwnProfile && hasUnsavedProfileChanges;
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
     setNoticeTone(tone);
@@ -1807,6 +1821,21 @@ export default function App() {
   useEffect(() => {
     setProfileDraft({ ...appUser, ...profile });
   }, [profile]);
+
+  useEffect(() => {
+    const userId = authSession?.user.id ?? null;
+    if (!userId) {
+      lastProfileSetupUserIdRef.current = null;
+      return;
+    }
+    if (lastProfileSetupUserIdRef.current === userId) {
+      return;
+    }
+    lastProfileSetupUserIdRef.current = userId;
+    setSelectedProfileName(profileData.name);
+    setProfileDraft({ ...profileData });
+    navigateToModule("profile", { skipProfileGuard: true });
+  }, [authSession?.user.id]);
 
   useEffect(() => {
     setProfile((current) =>
@@ -1913,6 +1942,18 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  useEffect(() => {
+    if (!shouldGuardProfileDraft) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [shouldGuardProfileDraft]);
+
   const favouriteItems = useMemo(
     () =>
       favourites
@@ -1920,6 +1961,19 @@ export default function App() {
         .filter((item): item is MarketplaceItem => Boolean(item)),
     [favourites, marketplace],
   );
+
+  const listingLocationSuggestions = useMemo(() => {
+    const input = normalize(listingDraft.location);
+    const uniqueLocations = Array.from(
+      new Set([
+        ...campusLocations.map((location) => location.name),
+        ...transportPlaceFilters.filter((place) => place !== "All"),
+      ]),
+    );
+    return uniqueLocations
+      .filter((location) => !input || normalize(location).includes(input))
+      .slice(0, 12);
+  }, [listingDraft.location]);
 
   const visibleMarketplace = useMemo(() => {
     const filtered = marketplace.filter((item) => {
@@ -2367,7 +2421,20 @@ export default function App() {
     setNotifications((current) => [item, ...current].slice(0, 40));
   }
 
-  function navigateToModule(module: ModuleKey) {
+  function confirmDiscardProfileDraft() {
+    if (!shouldGuardProfileDraft) {
+      return true;
+    }
+    return window.confirm("Discard unsaved profile details?");
+  }
+
+  function navigateToModule(
+    module: ModuleKey,
+    options: { skipProfileGuard?: boolean } = {},
+  ) {
+    if (!options.skipProfileGuard && !confirmDiscardProfileDraft()) {
+      return;
+    }
     const nextIndex = navItems.findIndex((item) => item.key === module);
     setPageDirection(
       nextIndex >= activeModuleIndex || nextIndex === -1 ? "forward" : "back",
@@ -2475,15 +2542,21 @@ export default function App() {
       if (data.session) {
         setAuthSession(data.session);
       } else {
-        setGuestMode(true);
+        setGuestMode(false);
       }
       await saveProfileForUserId(
         data.user?.id,
         nextProfile,
         authForm.email.trim().toLowerCase(),
       );
-      showNotice("Account created. Finish your profile setup.");
-      openOwnProfile();
+      showNotice(
+        data.session
+          ? "Account created. Finish your profile setup."
+          : "Account created. Check your email, then sign in to finish your profile setup.",
+      );
+      if (data.session) {
+        openOwnProfile();
+      }
       return;
     }
 
@@ -2498,7 +2571,7 @@ export default function App() {
     setAuthSession(data.session);
     setGuestMode(false);
     showNotice("Signed in");
-    navigateToModule("home");
+    openOwnProfile();
   }
 
   async function signInWithGoogle() {
@@ -2547,24 +2620,27 @@ export default function App() {
   }
 
   async function signOut() {
-    if (supabase) {
-      await supabase.auth.signOut();
+    if (!window.confirm("Sign out of EverythingUTM?")) {
+      return;
     }
     setAuthSession(null);
-    setGuestMode(true);
+    setGuestMode(false);
     setProfile(emptyProfile());
     setProfileDraft(emptyProfile());
     setSelectedProfileName("");
     showNotice("Signed out");
-    navigateToModule("home");
+    navigateToModule("home", { skipProfileGuard: true });
+    if (supabase) {
+      await supabase.auth.signOut().catch(() => undefined);
+    }
   }
 
   function browseAsGuest() {
-    setGuestMode(true);
+    setGuestMode(false);
     setProfile(emptyProfile());
     setProfileDraft(emptyProfile());
     setSelectedProfileName("");
-    navigateToModule("home");
+    navigateToModule("home", { skipProfileGuard: true });
   }
 
   function openNotification(item: NotificationItem) {
@@ -2739,18 +2815,32 @@ export default function App() {
   }
 
   function openProfile(name: string) {
+    if (!confirmDiscardProfileDraft()) {
+      return;
+    }
     setSelectedProfileName(name);
     setProfileDraft({ ...getProfile(name) });
-    navigateToModule("profile");
+    navigateToModule("profile", { skipProfileGuard: true });
   }
 
   function openOwnProfile() {
+    if (!confirmDiscardProfileDraft()) {
+      return;
+    }
     setSelectedProfileName(profileData.name);
     setProfileDraft({ ...profileData });
-    navigateToModule("profile");
+    navigateToModule("profile", { skipProfileGuard: true });
   }
 
   function buyListing(item: MarketplaceItem) {
+    if (item.sold) {
+      showNotice("This listing is already marked as sold", "error");
+      return;
+    }
+    if (isCurrentUserEntity(item.sellerId, item.seller)) {
+      showNotice("You cannot buy your own listing", "error");
+      return;
+    }
     const channel = `${t("privateChat")}: ${item.seller}`;
     const content = `Hi ${item.seller}, I would like to buy "${item.title}". Please send me your preferred payment QR or account number.`;
     const message: ChatMessage = {
@@ -2798,6 +2888,7 @@ export default function App() {
       images: listingImages,
       tags: compactTags(listingDraft.tags),
       createdAt: new Date().toISOString(),
+      sold: false,
     };
 
     setMarketplace((current) => [item, ...current]);
@@ -2873,6 +2964,26 @@ export default function App() {
     setSelectedListingId(null);
     setImageViewerListingId(null);
     showNotice("Listing deleted");
+  }
+
+  function toggleListingSold(itemId: string) {
+    const listing = marketplace.find((item) => item.id === itemId);
+    if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
+      showNotice("Only the listing author can update sold status", "error");
+      return;
+    }
+    setMarketplace((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              sold: !item.sold,
+              soldAt: !item.sold ? new Date().toISOString() : undefined,
+            }
+          : item,
+      ),
+    );
+    showNotice(listing.sold ? "Listing marked available" : "Listing marked sold");
   }
 
   async function shareListing(item: MarketplaceItem) {
@@ -3021,6 +3132,9 @@ export default function App() {
       showNotice("Only the message author can delete this message", "error");
       return;
     }
+    if (!window.confirm("Delete this message?")) {
+      return;
+    }
     setMessages((current) => current.filter((message) => message.id !== messageId));
     setMessageActionId(null);
   }
@@ -3160,6 +3274,9 @@ export default function App() {
     const targetQuestion = questions.find((question) => question.id === questionId);
     if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
       showNotice("Only the question author can delete this question", "error");
+      return;
+    }
+    if (!window.confirm("Delete this question and its answers?")) {
       return;
     }
     setQuestions((current) =>
@@ -3621,6 +3738,43 @@ export default function App() {
     showNotice("Review posted");
   }
 
+  async function deleteAccountOnline() {
+    if (!supabase || !authSession) {
+      throw new Error("Sign in before deleting your online account");
+    }
+
+    const edgeResult = await supabase.functions
+      .invoke("delete-account")
+      .catch((error: unknown) => ({ data: null, error }));
+    if (!edgeResult.error && edgeResult.data?.ok === true) {
+      return;
+    }
+
+    const response = await fetch("/.netlify/functions/delete-account", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authSession.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }).catch(() => null);
+    if (!response) {
+      throw new Error(
+        edgeResult.error instanceof Error
+          ? edgeResult.error.message
+          : "Online account deletion service is unavailable",
+      );
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(
+        payload?.reason ||
+          (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
+          "Online account deletion failed",
+      );
+    }
+  }
+
   async function deleteLocalAccount() {
     if (!deleteAccountArmed) {
       setDeleteAccountArmed(true);
@@ -3631,20 +3785,29 @@ export default function App() {
       showNotice('Type DELETE to confirm account deletion', "error");
       return;
     }
-    if (supabase && authSession) {
-      await supabase.functions.invoke("delete-account").catch(() => undefined);
-      await supabase.auth.signOut().catch(() => undefined);
+    try {
+      await deleteAccountOnline();
+    } catch (error) {
+      showNotice(
+        error instanceof Error
+          ? error.message
+          : "Online account deletion failed",
+        "error",
+      );
+      return;
     }
+    await supabase?.auth.signOut().catch(() => undefined);
     window.localStorage.clear();
     setDeleteAccountArmed(false);
     setDeleteConfirmText("");
     setAuthSession(null);
-    setGuestMode(true);
+    setGuestMode(false);
     setProfile(emptyProfile());
     setProfileDraft(emptyProfile());
     setSelectedProfileName("");
-    navigateToModule("home");
-    showNotice("Account deleted. Browsing as guest.");
+    navigateToModule("home", { skipProfileGuard: true });
+    setAuthMode("signin");
+    showNotice("Account deleted online.");
   }
 
   async function submitBugReport() {
@@ -3653,8 +3816,8 @@ export default function App() {
       return;
     }
     const payload = {
-      userName: isSignedIn ? currentDisplayName : `Guest (${currentDisplayName})`,
-      userEmail: authSession?.user.email ?? "guest",
+      userName: isSignedIn ? currentDisplayName : "Not signed in",
+      userEmail: authSession?.user.email ?? "not signed in",
       dateTime: new Date().toISOString(),
       details: bugReportDraft.trim(),
     };
@@ -3693,21 +3856,57 @@ export default function App() {
       ].slice(0, 200));
       return true;
     };
-    const { data, error } = await supabase.functions.invoke("report-bug", {
-      body: payload,
-    });
-    if (error || data?.ok === false) {
+    const sendBugReportEmail = async () => {
+      const edgeResult = await supabaseClient.functions
+        .invoke("report-bug", { body: payload })
+        .catch((invokeError: unknown) => ({ data: null, error: invokeError }));
+      if (!edgeResult.error && edgeResult.data?.ok === true) {
+        return;
+      }
+
+      const response = await fetch("/.netlify/functions/report-bug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      if (!response) {
+        throw new Error(
+          edgeResult.error instanceof Error
+            ? edgeResult.error.message
+            : "Bug report email service is unavailable",
+        );
+      }
+      const responsePayload = await response.json().catch(() => ({}));
+      if (!response.ok || responsePayload?.ok !== true) {
+        throw new Error(
+          responsePayload?.reason ||
+            (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
+            "Bug report email failed",
+        );
+      }
+    };
+
+    try {
+      await sendBugReportEmail();
+    } catch (error) {
       try {
         await storeBugReportFallback(
-          data?.reason || error?.message || "Bug report email function unavailable",
+          error instanceof Error
+            ? error.message
+            : "Bug report email function unavailable",
         );
       } catch {
         showNotice("Bug report could not be saved", "error");
         return;
       }
+      showNotice(
+        "Bug report saved, but email delivery is not configured on the server yet",
+        "error",
+      );
+      return;
     }
     setBugReportDraft("");
-    showNotice("Bug report submitted successfully");
+    showNotice("Bug report emailed successfully");
     addNotification("Bug report received", "Thanks for the report.", "settings");
   }
 
@@ -3845,11 +4044,8 @@ export default function App() {
               Reset password
             </button>
           )}
-          <button className="ghost-button full-width" type="button" onClick={browseAsGuest}>
-            Browse as guest
-          </button>
           <p className="fine-print">
-            Production email limits are handled by configuring custom SMTP in Supabase.
+            Create an account to access EverythingUTM and sync your campus data online.
           </p>
         </section>
       </div>
@@ -4065,7 +4261,7 @@ export default function App() {
                 <Store size={20} aria-hidden="true" />
                 <span>{t("listingsLive")}</span>
                 <strong>{marketplace.length}</strong>
-                <small>{favouriteItems.length} favourites</small>
+                <small>Marketplace posts</small>
               </article>
               <article className="metric-card">
                 <MapPinned size={20} aria-hidden="true" />
@@ -4079,12 +4275,19 @@ export default function App() {
                 <strong>{openRequestCount}</strong>
                 <small>Rides and delivery</small>
               </article>
-              <article className="metric-card">
+              <button
+                className="metric-card metric-button"
+                type="button"
+                onClick={() => {
+                  setMarketCategory("Favourites");
+                  navigateToModule("marketplace");
+                }}
+              >
                 <Heart size={20} aria-hidden="true" />
                 <span>{t("savedFavourites")}</span>
                 <strong>{favouriteItems.length}</strong>
                 <small>Marketplace items</small>
-              </article>
+              </button>
             </div>
 
             <div className="home-grid">
@@ -4319,6 +4522,7 @@ export default function App() {
                   <label>
                     <span>Pickup or delivery area</span>
                     <input
+                      list="listing-location-suggestions"
                       value={listingDraft.location}
                       onChange={(event) =>
                         setListingDraft((draft) => ({
@@ -4327,6 +4531,11 @@ export default function App() {
                         }))
                       }
                     />
+                    <datalist id="listing-location-suggestions">
+                      {listingLocationSuggestions.map((location) => (
+                        <option key={location} value={location} />
+                      ))}
+                    </datalist>
                   </label>
                   <label>
                     <span>Payment</span>
@@ -4427,7 +4636,7 @@ export default function App() {
                   <div className="product-grid">
                     {visibleMarketplace.map((item) => (
                       <article
-                        className="product-card clickable-card"
+                        className={`product-card clickable-card ${item.sold ? "is-sold" : ""}`}
                         key={item.id}
                         onClick={() => setSelectedListingId(item.id)}
                       >
@@ -4437,6 +4646,7 @@ export default function App() {
                             <span className="pill">{item.category}</span>
                             <strong>{formatListingPrice(item.price)}</strong>
                           </div>
+                          {item.sold && <span className="status-pill sold-pill">Sold</span>}
                           <h2>{item.title}</h2>
                           <p>{item.description}</p>
                           <button
@@ -4509,17 +4719,32 @@ export default function App() {
                             <button
                               className="primary-button"
                               type="button"
+                              disabled={
+                                Boolean(item.sold) ||
+                                isCurrentUserEntity(item.sellerId, item.seller)
+                              }
                               onClick={(event) => {
                                 event.stopPropagation();
                                 buyListing(item);
                               }}
                             >
                               <ShoppingBag size={17} aria-hidden="true" />
-                              {t("buy")}
+                              {item.sold ? "Sold" : t("buy")}
                             </button>
                           </div>
                           {isCurrentUserEntity(item.sellerId, item.seller) && (
                             <div className="card-actions compact-actions">
+                              <button
+                                className="secondary-button mini-button"
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleListingSold(item.id);
+                                }}
+                              >
+                                <Check size={14} aria-hidden="true" />
+                                {item.sold ? "Available" : "Mark sold"}
+                              </button>
                               <button
                                 className="secondary-button mini-button"
                                 type="button"
@@ -4562,7 +4787,9 @@ export default function App() {
             onClick={() => setSelectedListingId(null)}
           >
             <section
-              className="detail-modal listing-detail-modal"
+              className={`detail-modal listing-detail-modal ${
+                selectedListing.sold ? "is-sold" : ""
+              }`}
               role="dialog"
               aria-modal="true"
               aria-label={selectedListing.title}
@@ -4592,7 +4819,12 @@ export default function App() {
                 </span>
               </button>
               <div className="detail-modal-body">
-                <span className="pill">{selectedListing.category}</span>
+                <div className="card-actions compact-actions">
+                  <span className="pill">{selectedListing.category}</span>
+                  {selectedListing.sold && (
+                    <span className="status-pill sold-pill">Sold</span>
+                  )}
+                </div>
                 <h2>{selectedListing.title}</h2>
                 <strong className="modal-price">
                   {formatListingPrice(selectedListing.price)}
@@ -4659,10 +4891,17 @@ export default function App() {
                   <button
                     className="primary-button"
                     type="button"
+                    disabled={
+                      Boolean(selectedListing.sold) ||
+                      isCurrentUserEntity(
+                        selectedListing.sellerId,
+                        selectedListing.seller,
+                      )
+                    }
                     onClick={() => buyListing(selectedListing)}
                   >
                     <ShoppingBag size={17} aria-hidden="true" />
-                    {t("buy")}
+                    {selectedListing.sold ? "Sold" : t("buy")}
                   </button>
                 </div>
                 {isCurrentUserEntity(
@@ -4670,6 +4909,14 @@ export default function App() {
                   selectedListing.seller,
                 ) && (
                   <div className="card-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => toggleListingSold(selectedListing.id)}
+                    >
+                      <Check size={16} aria-hidden="true" />
+                      {selectedListing.sold ? "Mark available" : "Mark sold"}
+                    </button>
                     <button
                       className="secondary-button"
                       type="button"
@@ -4998,7 +5245,7 @@ export default function App() {
         )}
 
         {activeModule === "community" && (
-          <section className="module">
+          <section className="module chat-module">
             <div className="module-heading">
               <div>
                 <p className="eyebrow">Community</p>
@@ -5970,14 +6217,34 @@ export default function App() {
                         <option key={location.id} value={location.name} />
                       ))}
                     </datalist>
-                    <button
-                      className="secondary-button full-width"
-                      type="button"
-                      onClick={locateMeForRequest}
-                    >
-                      <Navigation size={16} aria-hidden="true" />
-                      Locate me for pickup
-                    </button>
+                    <div className="map-action-row">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={locateMeForRequest}
+                      >
+                        <Navigation size={16} aria-hidden="true" />
+                        Locate me
+                      </button>
+                      <a
+                        className="ghost-button link-button"
+                        href={googleMapsSearchUrl(requestDraft.pickup)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <MapPin size={16} aria-hidden="true" />
+                        Open pickup map
+                      </a>
+                      <a
+                        className="ghost-button link-button"
+                        href={googleMapsSearchUrl(requestDraft.dropoff)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Route size={16} aria-hidden="true" />
+                        Open drop-off map
+                      </a>
+                    </div>
                     {(requestDraft.pickupLat || requestDraft.dropoffLat) && (
                       <p className="fine-print">
                         Google Maps location saved for selected pickup or drop-off.
@@ -6444,28 +6711,6 @@ export default function App() {
             </div>
 
             <div className="profile-layout">
-              {guestMode && !isSignedIn && (
-                <section className="panel auth-inline-panel">
-                  <div className="panel-heading">
-                    <h2>Guest mode</h2>
-                    <UserCircle size={18} aria-hidden="true" />
-                  </div>
-                  <p className="muted">
-                    Sign in to save your profile, listings, chats, reviews, and requests
-                    to Supabase.
-                  </p>
-                  <button
-                    className="primary-button full-width"
-                    type="button"
-                    onClick={() => {
-                      setGuestMode(false);
-                      switchAuthMode("signin");
-                    }}
-                  >
-                    Sign in or create account
-                  </button>
-                </section>
-              )}
               <section className="panel profile-card-panel">
                 <div className="profile-photo">
                   {(viewingOwnProfile
