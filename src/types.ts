@@ -147,6 +147,8 @@ export type ServiceRequest = {
   paymentPreference?: PaymentMethod;
   notes: string;
   status: "Open" | "Matched" | "Paid" | "Completed";
+  createdAt?: string;
+  editedAt?: string;
   driver?: string;
   driverId?: string;
   driverAvatar?: string;

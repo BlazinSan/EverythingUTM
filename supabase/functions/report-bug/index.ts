@@ -14,6 +14,43 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#039;");
 }
 
+function safeReplyEmail(value: unknown) {
+  const email = String(value || "").trim();
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+    ? email
+    : "unknown@everythingutm.app";
+}
+
+async function sendWithFormSubmit({
+  toEmail,
+  body,
+  submittedAt,
+  details,
+}: {
+  toEmail: string;
+  body: Record<string, unknown>;
+  submittedAt: string;
+  details: string;
+}) {
+  const response = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      name: body.userName || "Unknown",
+      email: safeReplyEmail(body.userEmail),
+      _subject: "EverythingUTM bug report",
+      _template: "table",
+      _captcha: "false",
+      message: `EverythingUTM Bug Report\n\nUser: ${body.userName || "Unknown"}\nEmail: ${body.userEmail || "Unknown"}\nDate/time: ${submittedAt}\n\n${details}`,
+    }),
+  });
+  const text = await response.text().catch(() => "");
+  return { ok: response.ok, text };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -43,18 +80,30 @@ Deno.serve(async (request) => {
       : null;
 
   if (!resendApiKey) {
+    const fallback = await sendWithFormSubmit({
+      toEmail,
+      body,
+      submittedAt,
+      details,
+    });
     if (adminClient) {
       await adminClient.from("bug_reports").insert({
         user_name: body.userName || "Unknown",
         user_email: body.userEmail || "Unknown",
         details,
         reported_at: submittedAt,
-        emailed: false,
-        email_error: "Missing RESEND_API_KEY",
+        emailed: fallback.ok,
+        email_error: fallback.ok ? null : `Missing RESEND_API_KEY. Fallback failed: ${fallback.text}`,
       });
     }
-    return new Response(JSON.stringify({ ok: false, reason: "Missing RESEND_API_KEY" }), {
-      status: 500,
+    return new Response(JSON.stringify({
+      ok: fallback.ok,
+      provider: fallback.ok ? "formsubmit" : undefined,
+      reason: fallback.ok
+        ? undefined
+        : `Missing RESEND_API_KEY. Fallback failed: ${fallback.text}`,
+    }), {
+      status: fallback.ok ? 200 : 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -82,6 +131,15 @@ Deno.serve(async (request) => {
     }),
   });
   const responseText = await response.text().catch(() => "");
+  const fallback = response.ok
+    ? { ok: false, text: "" }
+    : await sendWithFormSubmit({
+      toEmail,
+      body,
+      submittedAt,
+      details,
+    });
+  const delivered = response.ok || fallback.ok;
 
   if (adminClient) {
     await adminClient.from("bug_reports").insert({
@@ -89,18 +147,21 @@ Deno.serve(async (request) => {
       user_email: body.userEmail || "Unknown",
       details,
       reported_at: submittedAt,
-      emailed: response.ok,
-      email_error: response.ok ? null : responseText,
+      emailed: delivered,
+      email_error: delivered ? null : `${responseText}. Fallback failed: ${fallback.text}`,
     });
   }
 
   return new Response(
     JSON.stringify({
-      ok: response.ok,
-      reason: response.ok ? undefined : `Email provider rejected the message: ${responseText}`,
+      ok: delivered,
+      provider: response.ok ? "resend" : fallback.ok ? "formsubmit" : undefined,
+      reason: delivered
+        ? undefined
+        : `Email provider rejected the message: ${responseText}. Fallback failed: ${fallback.text}`,
     }),
     {
-      status: response.ok ? 200 : 502,
+      status: delivered ? 200 : 502,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     },
   );

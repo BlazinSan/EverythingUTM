@@ -74,6 +74,46 @@ create policy "EverythingUTM bug reports insert"
   for insert
   with check (true);
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'app_state'
+  ) then
+    alter publication supabase_realtime add table public.app_state;
+  end if;
+end $$;
+
+create or replace function public.delete_everythingutm_current_user()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  delete from public.user_profiles
+  where id = current_user_id;
+
+  delete from public.app_state
+  where storage_key = 'everything-utm:user-profile:' || current_user_id::text;
+
+  delete from auth.users
+  where id = current_user_id;
+end;
+$$;
+
+revoke all on function public.delete_everythingutm_current_user() from public;
+grant execute on function public.delete_everythingutm_current_user() to authenticated;
+
 create or replace function public.handle_everythingutm_new_user()
 returns trigger
 language plpgsql

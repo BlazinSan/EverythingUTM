@@ -8,7 +8,14 @@ import {
   useRef,
 } from "react";
 import L from "leaflet";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
 import {
   ArrowUpDown,
   BadgeCheck,
@@ -88,6 +95,7 @@ import {
   loadSupabaseState,
   saveSupabaseState,
   supabase,
+  supabaseNamespace,
 } from "./lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import type {
@@ -182,6 +190,30 @@ const questionSortOptions = [
   "Most likes/upvotes",
   "Least likes/upvotes",
 ] as const;
+
+const requestSortOptions = [
+  "Date posted",
+  "Price: low to high",
+  "Price: high to low",
+] as const;
+
+const moduleSlugs: Record<ModuleKey, string> = {
+  home: "home",
+  marketplace: "marketplace",
+  map: "campus-map",
+  community: "chats",
+  qa: "qa",
+  papers: "past-papers",
+  requests: "transportation",
+  bus: "bus-schedule",
+  profile: "profile",
+  settings: "settings",
+  notifications: "notifications",
+};
+
+const moduleKeysBySlug = Object.fromEntries(
+  Object.entries(moduleSlugs).map(([key, slug]) => [slug, key]),
+) as Record<string, ModuleKey>;
 
 const regularBusTimes = [
   "07:00",
@@ -715,6 +747,25 @@ function formatTransportSchedule(day: string, time: string) {
   return `${day} at ${time}`;
 }
 
+function parseTransportSchedule(value: string) {
+  const match = value.match(
+    /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) at (\d{2}:\d{2})$/,
+  );
+  return {
+    scheduleDay: match?.[1] ?? currentDayName(),
+    scheduleTime: match?.[2] ?? currentTimeValue(),
+  };
+}
+
+function moduleFromHash(hash = window.location.hash) {
+  const slug = hash.replace(/^#\/?/, "").trim();
+  return moduleKeysBySlug[slug] ?? null;
+}
+
+function hashForModule(module: ModuleKey) {
+  return `#${moduleSlugs[module]}`;
+}
+
 function normalize(value: string) {
   return value.trim().toLowerCase();
 }
@@ -793,6 +844,10 @@ function listingShareUrl(itemId: string) {
 }
 
 function listingShareText(item: MarketplaceItem) {
+  return listingShareLines(item, true).join("\n");
+}
+
+function listingShareLines(item: MarketplaceItem, includeUrl: boolean) {
   return [
     `EverythingUTM Marketplace`,
     `${item.title}`,
@@ -801,8 +856,8 @@ function listingShareText(item: MarketplaceItem) {
     `Pickup/area: ${item.location}`,
     `Seller: ${item.seller}`,
     item.description,
-    `Open in app: ${listingShareUrl(item.id)}`,
-  ].join("\n");
+    includeUrl ? `Open in app: ${listingShareUrl(item.id)}` : "",
+  ].filter(Boolean);
 }
 
 function googleMapsUrlFor(lat: number, lng: number) {
@@ -1418,16 +1473,52 @@ function useLocalStorageState<T>(
     };
 
     window.addEventListener("focus", refreshOnlineState);
-    const timer = window.setInterval(
-      refreshOnlineState,
-      options.pollMs ?? 30_000,
-    );
+    const timer = window.setInterval(refreshOnlineState, options.pollMs ?? 5_000);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", refreshOnlineState);
       window.clearInterval(timer);
     };
   }, [key, options.pollMs, options.reloadKey, supabaseLoaded, syncOnline]);
+
+  useEffect(() => {
+    if (!syncOnline || !isSupabaseConfigured || !supabaseLoaded || !supabase) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    const channel = supabaseClient
+      .channel(`everythingutm-app-state-${key}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "app_state",
+          filter: `namespace=eq.${supabaseNamespace}`,
+        },
+        (payload) => {
+          const row = payload.new as
+            | { storage_key?: string; data?: T }
+            | Record<string, never>;
+          if (row.storage_key !== key || typeof row.data === "undefined") {
+            return;
+          }
+          setState((current) =>
+            mergeOnlineAndLocalState(
+              key,
+              row.data as T,
+              sanitizeStoredState(key, current),
+            ),
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabaseClient.removeChannel(channel);
+    };
+  }, [key, options.reloadKey, supabaseLoaded, syncOnline]);
 
   useEffect(() => {
     const cleanState = sanitizeStoredState(key, state);
@@ -1500,6 +1591,28 @@ function EmptyState({
   );
 }
 
+function NoticeBanner({
+  message,
+  tone,
+}: {
+  message: string;
+  tone: "success" | "error";
+}) {
+  if (!message) {
+    return null;
+  }
+  return (
+    <div className={`notice inline-notice ${tone === "error" ? "is-error" : ""}`} role="status">
+      {tone === "error" ? (
+        <CircleX size={18} aria-hidden="true" />
+      ) : (
+        <CheckCircle2 size={18} aria-hidden="true" />
+      )}
+      <span>{message}</span>
+    </div>
+  );
+}
+
 function PersonAvatar({
   name,
   image,
@@ -1524,8 +1637,40 @@ function PersonAvatar({
   );
 }
 
+function RequestPinPicker({
+  point,
+  onPick,
+}: {
+  point: { lat: number; lng: number } | null;
+  onPick: (point: { lat: number; lng: number }) => void;
+}) {
+  const map = useMapEvents({
+    click(event) {
+      onPick({
+        lat: Number(event.latlng.lat.toFixed(6)),
+        lng: Number(event.latlng.lng.toFixed(6)),
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (point) {
+      map.flyTo([point.lat, point.lng], 17, { duration: 0.35 });
+    }
+  }, [map, point]);
+
+  return point ? (
+    <Marker
+      icon={campusMarkerIcon("Services", true)}
+      position={[point.lat, point.lng]}
+    />
+  ) : null;
+}
+
 export default function App() {
-  const [activeModule, setActiveModuleState] = useState<ModuleKey>("home");
+  const [activeModule, setActiveModuleState] = useState<ModuleKey>(
+    () => moduleFromHash() ?? "home",
+  );
   const [pageDirection, setPageDirection] = useState<"forward" | "back">(
     "forward",
   );
@@ -1546,6 +1691,12 @@ export default function App() {
     password: "",
     name: "",
     sex: "Prefer not to say",
+  });
+  const [authBusy, setAuthBusy] = useState(false);
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    password: "",
+    confirmPassword: "",
   });
   const [resetEmailSentAt, setResetEmailSentAt] = useState(0);
   const [query, setQuery] = useState("");
@@ -1626,9 +1777,21 @@ export default function App() {
   const [paperFile, setPaperFile] = useState<File | null>(null);
   const [paperFaculty, setPaperFaculty] = useState("All");
   const [requestDraft, setRequestDraft] = useState(initialRequest);
+  const [requestSort, setRequestSort] =
+    useState<(typeof requestSortOptions)[number]>("Date posted");
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [pickupMapLocationId, setPickupMapLocationId] = useState("");
   const [dropoffMapLocationId, setDropoffMapLocationId] = useState("");
   const [requestPlaceFilter, setRequestPlaceFilter] = useState("All");
+  const [mapPickerField, setMapPickerField] = useState<"pickup" | "dropoff" | null>(
+    null,
+  );
+  const [mapPickerPoint, setMapPickerPoint] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [mapPickerResolving, setMapPickerResolving] = useState(false);
+  const [locatingRequest, setLocatingRequest] = useState(false);
   const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
   const [imageViewerListingId, setImageViewerListingId] = useState<string | null>(
     null,
@@ -1753,6 +1916,15 @@ export default function App() {
       return;
     }
     let mounted = true;
+    const recoveryRequested =
+      new URLSearchParams(window.location.search).get("type") === "recovery" ||
+      new URLSearchParams(window.location.hash.replace(/^#/, "?")).get("type") ===
+        "recovery" ||
+      window.location.hash.includes("reset-password");
+    if (recoveryRequested) {
+      setPasswordRecoveryMode(true);
+      setAuthMode("signin");
+    }
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) {
         return;
@@ -1766,6 +1938,11 @@ export default function App() {
       setAuthSession(session);
       if (session) {
         setGuestMode(false);
+      }
+      if (_event === "PASSWORD_RECOVERY") {
+        setPasswordRecoveryMode(true);
+        setAuthMode("signin");
+        showNotice("Enter a new password to finish resetting your account.");
       }
     });
     return () => {
@@ -1821,6 +1998,20 @@ export default function App() {
   useEffect(() => {
     setProfileDraft({ ...appUser, ...profile });
   }, [profile]);
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.history.replaceState(null, "", hashForModule(activeModule));
+    }
+    const handleHashChange = () => {
+      const module = moduleFromHash();
+      if (module && module !== activeModule) {
+        setActiveModuleState(module);
+      }
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [activeModule]);
 
   useEffect(() => {
     const userId = authSession?.user.id ?? null;
@@ -2128,7 +2319,7 @@ export default function App() {
     : [];
 
   const visibleRequests = useMemo(() => {
-    return requests.filter((request) => {
+    const filtered = requests.filter((request) => {
       const matchesPlace =
         requestPlaceFilter === "All" ||
         [request.pickup, request.dropoff]
@@ -2153,7 +2344,19 @@ export default function App() {
           .includes(search)
       );
     });
-  }, [requestPlaceFilter, requests, search]);
+    return [...filtered].sort((a, b) => {
+      if (requestSort === "Price: low to high") {
+        return a.budget - b.budget;
+      }
+      if (requestSort === "Price: high to low") {
+        return b.budget - a.budget;
+      }
+      return (
+        new Date(b.createdAt ?? "1970-01-01").getTime() -
+        new Date(a.createdAt ?? "1970-01-01").getTime()
+      );
+    });
+  }, [requestPlaceFilter, requestSort, requests, search]);
 
   const openRequestCount = requests.filter(
     (request) => request.status === "Open",
@@ -2190,6 +2393,8 @@ export default function App() {
     selectedBusRoute,
     activeBusStop,
   );
+  const mapPickerTitle =
+    mapPickerField === "pickup" ? "Select pickup pin" : "Select drop-off pin";
 
   useEffect(() => {
     if (!selectedBusStops.length) {
@@ -2440,10 +2645,16 @@ export default function App() {
       nextIndex >= activeModuleIndex || nextIndex === -1 ? "forward" : "back",
     );
     setActiveModuleState(module);
+    const nextHash = hashForModule(module);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
   }
 
   function switchAuthMode(mode: "signin" | "signup") {
     setAuthMode(mode);
+    setNotice("");
+    setPasswordRecoveryMode(false);
     setAuthForm({
       email: "",
       password: "",
@@ -2483,6 +2694,9 @@ export default function App() {
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (authBusy) {
+      return;
+    }
     if (!supabase) {
       setGuestMode(false);
       showNotice("Supabase is not configured yet", "error");
@@ -2493,104 +2707,119 @@ export default function App() {
       return;
     }
 
-    if (authMode === "signup") {
-      if (!authForm.name.trim()) {
-        showNotice("Name is required to create an account", "error");
-        return;
-      }
-      const { data: existingProfile } = await supabase
-        .from("user_profiles")
-        .select("id")
-        .eq("email", authForm.email.trim().toLowerCase())
-        .maybeSingle();
-      if (existingProfile) {
-        showNotice("This email already has an EverythingUTM account", "error");
+    setAuthBusy(true);
+    try {
+      if (authMode === "signup") {
+        if (!authForm.name.trim()) {
+          showNotice("Name is required to create an account", "error");
+          return;
+        }
+        const { data: existingProfile, error: existingProfileError } = await supabase
+          .from("user_profiles")
+          .select("id")
+          .eq("email", authForm.email.trim().toLowerCase())
+          .maybeSingle();
+        if (!existingProfileError && existingProfile) {
+          showNotice("This email already has an EverythingUTM account", "error");
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: authForm.email.trim(),
+          password: authForm.password,
+          options: {
+            data: {
+              name: authForm.name.trim(),
+              sex: authForm.sex,
+            },
+            emailRedirectTo: `${window.location.origin}#profile`,
+          },
+        });
+        if (error) {
+          showNotice(
+            error.message.toLowerCase().includes("rate limit")
+              ? "Email sending is busy. Try Google sign-in or wait before requesting another email."
+              : error.message,
+            "error",
+          );
+          return;
+        }
+        if (
+          data.user &&
+          Array.isArray(data.user.identities) &&
+          data.user.identities.length === 0
+        ) {
+          showNotice("This email already has an EverythingUTM account", "error");
+          return;
+        }
+        const nextProfile = emptyProfile();
+        setProfile(nextProfile);
+        setProfileDraft(nextProfile);
+        if (data.session) {
+          setAuthSession(data.session);
+        } else {
+          setGuestMode(false);
+        }
+        saveProfileForUserId(
+          data.user?.id,
+          nextProfile,
+          authForm.email.trim().toLowerCase(),
+        ).catch(() => undefined);
+        showNotice(
+          data.session
+            ? "Account created. Finish your profile setup."
+            : "Account created. Check your email, then sign in to finish your profile setup.",
+        );
+        if (data.session) {
+          openOwnProfile();
+        }
         return;
       }
 
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: authForm.email.trim(),
         password: authForm.password,
-        options: {
-          data: {
-            name: authForm.name.trim(),
-            sex: authForm.sex,
-          },
-          emailRedirectTo: window.location.origin,
-        },
       });
       if (error) {
-        showNotice(
-          error.message.toLowerCase().includes("rate limit")
-            ? "Email sending is busy. Try Google sign-in or wait before requesting another email."
-            : error.message,
-          "error",
-        );
+        showNotice(error.message, "error");
         return;
       }
-      if (
-        data.user &&
-        Array.isArray(data.user.identities) &&
-        data.user.identities.length === 0
-      ) {
-        showNotice("This email already has an EverythingUTM account", "error");
-        return;
-      }
-      const nextProfile = emptyProfile();
-      setProfile(nextProfile);
-      setProfileDraft(nextProfile);
-      if (data.session) {
-        setAuthSession(data.session);
-      } else {
-        setGuestMode(false);
-      }
-      await saveProfileForUserId(
-        data.user?.id,
-        nextProfile,
-        authForm.email.trim().toLowerCase(),
-      );
-      showNotice(
-        data.session
-          ? "Account created. Finish your profile setup."
-          : "Account created. Check your email, then sign in to finish your profile setup.",
-      );
-      if (data.session) {
-        openOwnProfile();
-      }
-      return;
+      setAuthSession(data.session);
+      setGuestMode(false);
+      showNotice("Signed in. Opening your profile setup.");
+      openOwnProfile();
+    } finally {
+      setAuthBusy(false);
     }
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: authForm.email.trim(),
-      password: authForm.password,
-    });
-    if (error) {
-      showNotice(error.message, "error");
-      return;
-    }
-    setAuthSession(data.session);
-    setGuestMode(false);
-    showNotice("Signed in");
-    openOwnProfile();
   }
 
   async function signInWithGoogle() {
+    if (authBusy) {
+      return;
+    }
     if (!supabase) {
       showNotice("Supabase is not configured yet", "error");
       return;
     }
+    setAuthBusy(true);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}#profile`,
       },
     });
     if (error) {
       showNotice(error.message, "error");
+      setAuthBusy(false);
+    } else {
+      showNotice("Redirecting to Google sign-in...");
     }
   }
 
   async function resetPassword() {
+    if (authBusy) {
+      return;
+    }
     if (!supabase) {
       showNotice("Supabase is not configured yet", "error");
       return;
@@ -2603,20 +2832,62 @@ export default function App() {
       showNotice("Please wait before requesting another reset email", "error");
       return;
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(authForm.email.trim(), {
-      redirectTo: window.location.origin,
-    });
-    if (error) {
-      showNotice(
-        error.message.toLowerCase().includes("rate limit")
-          ? "Password email is rate limited. Try again later or use Google sign-in."
-          : error.message,
-        "error",
-      );
+    setAuthBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(authForm.email.trim(), {
+        redirectTo: `${window.location.origin}#reset-password`,
+      });
+      if (error) {
+        showNotice(
+          error.message.toLowerCase().includes("rate limit")
+            ? "Password email is rate limited. Try again later or use Google sign-in."
+            : error.message,
+          "error",
+        );
+        return;
+      }
+      setResetEmailSentAt(Date.now());
+      showNotice("Password reset email sent. Open the link to choose a new password.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function updateRecoveredPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (authBusy) {
       return;
     }
-    setResetEmailSentAt(Date.now());
-    showNotice("Password reset email sent");
+    if (!supabase) {
+      showNotice("Supabase is not configured yet", "error");
+      return;
+    }
+    if (passwordForm.password.length < 6) {
+      showNotice("New password must be at least 6 characters", "error");
+      return;
+    }
+    if (passwordForm.password !== passwordForm.confirmPassword) {
+      showNotice("Password confirmation does not match", "error");
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: passwordForm.password,
+      });
+      if (error) {
+        showNotice(error.message, "error");
+        return;
+      }
+      setPasswordForm({ password: "", confirmPassword: "" });
+      setPasswordRecoveryMode(false);
+      setAuthMode("signin");
+      showNotice("Password updated. Sign in with your new password.");
+      await supabase.auth.signOut().catch(() => undefined);
+      setAuthSession(null);
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function signOut() {
@@ -2959,6 +3230,9 @@ export default function App() {
       showNotice("Only the listing author can delete this post", "error");
       return;
     }
+    if (!window.confirm(`Delete "${listing.title}" from Marketplace?`)) {
+      return;
+    }
     setMarketplace((current) => current.filter((item) => item.id !== itemId));
     setFavourites((current) => current.filter((id) => id !== itemId));
     setSelectedListingId(null);
@@ -2987,7 +3261,8 @@ export default function App() {
   }
 
   async function shareListing(item: MarketplaceItem) {
-    const text = listingShareText(item);
+    const text = listingShareLines(item, false).join("\n");
+    const clipboardText = listingShareText(item);
     const url = listingShareUrl(item.id);
     try {
       if (navigator.share) {
@@ -3012,11 +3287,11 @@ export default function App() {
           await navigator.share(shareData);
         }
       } else {
-        await navigator.clipboard?.writeText(text);
+        await navigator.clipboard?.writeText(clipboardText);
         showNotice("Listing summary and app link copied");
       }
     } catch {
-      await navigator.clipboard?.writeText(text).catch(() => undefined);
+      await navigator.clipboard?.writeText(clipboardText).catch(() => undefined);
       showNotice("Listing summary ready to share");
     }
   }
@@ -3458,11 +3733,61 @@ export default function App() {
     }));
   }
 
+  function openRequestMapPicker(field: "pickup" | "dropoff") {
+    const lat =
+      field === "pickup" ? requestDraft.pickupLat : requestDraft.dropoffLat;
+    const lng =
+      field === "pickup" ? requestDraft.pickupLng : requestDraft.dropoffLng;
+    const knownLocation = campusLocations.find(
+      (location) =>
+        location.name ===
+        (field === "pickup" ? requestDraft.pickup : requestDraft.dropoff),
+    );
+    setMapPickerField(field);
+    setMapPickerPoint(
+      lat && lng
+        ? { lat, lng }
+        : knownLocation
+          ? { lat: knownLocation.lat, lng: knownLocation.lng }
+          : { lat: 1.5596, lng: 103.6374 },
+    );
+  }
+
+  async function confirmRequestMapPin() {
+    if (!mapPickerField || !mapPickerPoint) {
+      showNotice("Tap the map to choose a pin first", "error");
+      return;
+    }
+    setMapPickerResolving(true);
+    const point = mapPickerPoint;
+    const field = mapPickerField;
+    const placeName =
+      (await reverseGeocode(point.lat, point.lng)) ||
+      `Pinned Google Maps location (${point.lat.toFixed(5)}, ${point.lng.toFixed(5)})`;
+    setRequestDraft((draft) => ({
+      ...draft,
+      [field]: placeName,
+      [`${field}Lat`]: point.lat,
+      [`${field}Lng`]: point.lng,
+      [`${field}MapUrl`]: googleMapsUrlFor(point.lat, point.lng),
+    }));
+    if (field === "pickup") {
+      setPickupMapLocationId("");
+    } else {
+      setDropoffMapLocationId("");
+    }
+    setMapPickerResolving(false);
+    setMapPickerField(null);
+    setMapPickerPoint(null);
+    showNotice(`${field === "pickup" ? "Pickup" : "Drop-off"} pin selected`);
+  }
+
   function locateMeForRequest() {
     if (!navigator.geolocation) {
       showNotice("Location access is not available in this browser", "error");
       return;
     }
+    setLocatingRequest(true);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const lat = Number(position.coords.latitude.toFixed(6));
@@ -3478,8 +3803,12 @@ export default function App() {
           pickupMapUrl: googleMapsUrlFor(lat, lng),
         }));
         showNotice("Pickup set to your Google Maps location");
+        setLocatingRequest(false);
       },
-      () => showNotice("Unable to access your location", "error"),
+      () => {
+        setLocatingRequest(false);
+        showNotice("Unable to access your location", "error");
+      },
       { enableHighAccuracy: true, timeout: 9000 },
     );
   }
@@ -3527,13 +3856,25 @@ export default function App() {
       return;
     }
 
+    const existingRequest = editingRequestId
+      ? requests.find((request) => request.id === editingRequestId)
+      : null;
+    if (
+      editingRequestId &&
+      (!existingRequest ||
+        !isCurrentUserEntity(existingRequest.requesterId, existingRequest.requester))
+    ) {
+      showNotice("Only the request author can edit this request", "error");
+      return;
+    }
+
     const request: ServiceRequest = {
-      id: uid("req"),
+      id: editingRequestId ?? uid("req"),
       type: requestDraft.type,
       title: requestDraft.title.trim(),
-      requester: currentDisplayName,
-      requesterId: currentUserId,
-      requesterAvatar: profileData.profilePicture,
+      requester: existingRequest?.requester ?? currentDisplayName,
+      requesterId: existingRequest?.requesterId ?? currentUserId,
+      requesterAvatar: existingRequest?.requesterAvatar ?? profileData.profilePicture,
       pickup: requestDraft.pickup.trim() || "UTM Johor Bahru",
       pickupLat: requestDraft.pickupLat ?? undefined,
       pickupLng: requestDraft.pickupLng ?? undefined,
@@ -3549,15 +3890,86 @@ export default function App() {
       budget: parseBudgetInput(requestDraft.budget),
       paymentPreference: requestDraft.paymentPreference,
       notes: requestDraft.notes.trim(),
-      status: "Open",
+      status: existingRequest?.status ?? "Open",
+      driver: existingRequest?.driver,
+      driverId: existingRequest?.driverId,
+      driverAvatar: existingRequest?.driverAvatar,
+      paymentId: existingRequest?.paymentId,
+      createdAt: existingRequest?.createdAt ?? new Date().toISOString(),
+      editedAt: editingRequestId ? new Date().toISOString() : undefined,
     };
 
-    setRequests((current) => [request, ...current]);
+    setRequests((current) =>
+      editingRequestId
+        ? current.map((entry) => (entry.id === editingRequestId ? request : entry))
+        : [request, ...current],
+    );
+    setRequestDraft(initialRequest);
+    setEditingRequestId(null);
+    setPickupMapLocationId("");
+    setDropoffMapLocationId("");
+    showNotice(
+      editingRequestId ? `${request.type} request updated` : `${request.type} request posted`,
+    );
+    addNotification(
+      editingRequestId ? "Request updated" : "Request posted",
+      request.title,
+      "requests",
+    );
+  }
+
+  function beginEditRequest(request: ServiceRequest) {
+    if (!isCurrentUserEntity(request.requesterId, request.requester)) {
+      showNotice("Only the request author can edit this request", "error");
+      return;
+    }
+    const schedule = parseTransportSchedule(request.schedule);
+    setEditingRequestId(request.id);
+    setRequestDraft({
+      type: request.type,
+      title: request.title,
+      pickup: request.pickup,
+      dropoff: request.dropoff,
+      pickupLat: request.pickupLat ?? null,
+      pickupLng: request.pickupLng ?? null,
+      pickupMapUrl: request.pickupMapUrl ?? "",
+      dropoffLat: request.dropoffLat ?? null,
+      dropoffLng: request.dropoffLng ?? null,
+      dropoffMapUrl: request.dropoffMapUrl ?? "",
+      scheduleDay: schedule.scheduleDay,
+      scheduleTime: schedule.scheduleTime,
+      schedule: request.schedule,
+      budget: request.budget ? String(request.budget) : "",
+      paymentPreference: request.paymentPreference ?? "DuitNow QR",
+      notes: request.notes,
+    });
+    setPickupMapLocationId("");
+    setDropoffMapLocationId("");
+    setRequestActionId(null);
+  }
+
+  function cancelRequestEdit() {
+    setEditingRequestId(null);
     setRequestDraft(initialRequest);
     setPickupMapLocationId("");
     setDropoffMapLocationId("");
-    showNotice(`${request.type} request posted`);
-    addNotification("Request posted", request.title, "requests");
+  }
+
+  function deleteRequest(requestId: string) {
+    const request = requests.find((entry) => entry.id === requestId);
+    if (!request || !isCurrentUserEntity(request.requesterId, request.requester)) {
+      showNotice("Only the request author can delete this request", "error");
+      return;
+    }
+    if (!window.confirm(`Delete "${request.title}" from Transportation?`)) {
+      return;
+    }
+    setRequests((current) => current.filter((entry) => entry.id !== requestId));
+    if (editingRequestId === requestId) {
+      cancelRequestEdit();
+    }
+    setRequestActionId(null);
+    showNotice("Transportation request deleted");
   }
 
   function matchRequest(requestId: string) {
@@ -3741,6 +4153,17 @@ export default function App() {
   async function deleteAccountOnline() {
     if (!supabase || !authSession) {
       throw new Error("Sign in before deleting your online account");
+    }
+
+    try {
+      const { error: rpcError } = await supabase.rpc(
+        "delete_everythingutm_current_user",
+      );
+      if (!rpcError) {
+        return;
+      }
+    } catch {
+      // Fall back to the deployed deletion functions below.
     }
 
     const edgeResult = await supabase.functions
@@ -3928,6 +4351,82 @@ export default function App() {
     );
   }
 
+  if (passwordRecoveryMode) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="brand auth-brand">
+            <div className="brand-mark" aria-hidden="true">
+              <img src="/everythingutm-icon.png" alt="" />
+            </div>
+            <div>
+              <p>EverythingUTM</p>
+              <span>Reset your password</span>
+            </div>
+          </div>
+          <div>
+            <p className="eyebrow">Password recovery</p>
+            <h1>Choose a new password</h1>
+            <p className="muted">
+              Enter your new password twice, then sign in again with the updated
+              password.
+            </p>
+          </div>
+          <NoticeBanner message={notice} tone={noticeTone} />
+          <form className="stacked-form" onSubmit={updateRecoveredPassword}>
+            <label>
+              <span>New password</span>
+              <input
+                autoComplete="new-password"
+                type="password"
+                value={passwordForm.password}
+                onChange={(event) =>
+                  setPasswordForm((form) => ({
+                    ...form,
+                    password: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Confirm new password</span>
+              <input
+                autoComplete="new-password"
+                type="password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) =>
+                  setPasswordForm((form) => ({
+                    ...form,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <button className="primary-button full-width" type="submit" disabled={authBusy}>
+              <Check size={17} aria-hidden="true" />
+              {authBusy ? "Updating..." : "Update password"}
+            </button>
+          </form>
+          <button
+            className="ghost-button full-width"
+            type="button"
+            disabled={authBusy}
+            onClick={async () => {
+              setPasswordRecoveryMode(false);
+              setPasswordForm({ password: "", confirmPassword: "" });
+              setAuthMode("signin");
+              await supabase?.auth.signOut().catch(() => undefined);
+              setAuthSession(null);
+              showNotice("Password reset cancelled", "error");
+            }}
+          >
+            Back to sign in
+          </button>
+        </section>
+      </div>
+    );
+  }
+
   if (!canUseApp) {
     return (
       <div className="auth-shell">
@@ -3949,10 +4448,12 @@ export default function App() {
               from one student hub.
             </p>
           </div>
+          <NoticeBanner message={notice} tone={noticeTone} />
           <div className="segmented-control">
             <button
               className={authMode === "signin" ? "is-active" : ""}
               type="button"
+              disabled={authBusy}
               onClick={() => switchAuthMode("signin")}
             >
               Sign in
@@ -3960,6 +4461,7 @@ export default function App() {
             <button
               className={authMode === "signup" ? "is-active" : ""}
               type="button"
+              disabled={authBusy}
               onClick={() => switchAuthMode("signup")}
             >
               Sign up
@@ -4022,14 +4524,21 @@ export default function App() {
                 }
               />
             </label>
-            <button className="primary-button full-width" type="submit">
+            <button className="primary-button full-width" type="submit" disabled={authBusy}>
               <UserCircle size={17} aria-hidden="true" />
-              {authMode === "signup" ? "Create account" : "Sign in"}
+              {authBusy
+                ? authMode === "signup"
+                  ? "Creating..."
+                  : "Signing in..."
+                : authMode === "signup"
+                  ? "Create account"
+                  : "Sign in"}
             </button>
           </form>
           <button
             className="secondary-button full-width"
             type="button"
+            disabled={authBusy}
             onClick={signInWithGoogle}
           >
             <BadgeCheck size={17} aria-hidden="true" />
@@ -4039,6 +4548,7 @@ export default function App() {
             <button
               className="ghost-button full-width"
               type="button"
+              disabled={authBusy}
               onClick={resetPassword}
             >
               Reset password
@@ -4095,7 +4605,7 @@ export default function App() {
       </aside>
 
       <main
-        className="main-content"
+        className={`main-content ${activeModule === "community" ? "is-chat-page" : ""}`}
         data-page-direction={pageDirection}
         onPointerDownCapture={(event) => {
           const target = event.target as HTMLElement;
@@ -5129,6 +5639,114 @@ export default function App() {
           </div>
         )}
 
+        {mapPickerField && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => {
+              if (!mapPickerResolving) {
+                setMapPickerField(null);
+                setMapPickerPoint(null);
+              }
+            }}
+          >
+            <section
+              className="detail-modal pin-picker-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={mapPickerTitle}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                className="icon-button modal-close"
+                type="button"
+                title="Close"
+                disabled={mapPickerResolving}
+                onClick={() => {
+                  setMapPickerField(null);
+                  setMapPickerPoint(null);
+                }}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+              <div className="pin-picker-body">
+                <div>
+                  <p className="eyebrow">Map pin</p>
+                  <h2>{mapPickerTitle}</h2>
+                  <p className="muted">
+                    Tap anywhere on the map, or pick a famous UTM place below.
+                  </p>
+                </div>
+                <MapContainer
+                  center={[
+                    mapPickerPoint?.lat ?? 1.5596,
+                    mapPickerPoint?.lng ?? 103.6374,
+                  ]}
+                  className="pin-picker-map"
+                  zoom={16}
+                  scrollWheelZoom
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <RequestPinPicker
+                    point={mapPickerPoint}
+                    onPick={setMapPickerPoint}
+                  />
+                </MapContainer>
+                <div className="quick-place-grid pin-place-grid">
+                  {campusLocations.slice(0, 8).map((location) => (
+                    <button
+                      className="quick-place"
+                      key={location.id}
+                      type="button"
+                      onClick={() =>
+                        setMapPickerPoint({
+                          lat: location.lat,
+                          lng: location.lng,
+                        })
+                      }
+                    >
+                      <MapPin size={15} aria-hidden="true" />
+                      <span>{location.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="card-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={!mapPickerPoint || mapPickerResolving}
+                    onClick={confirmRequestMapPin}
+                  >
+                    <Check size={16} aria-hidden="true" />
+                    {mapPickerResolving ? (
+                      <>
+                        Parsing location
+                        <span className="loading-dots" aria-hidden="true" />
+                      </>
+                    ) : (
+                      "Use this pin"
+                    )}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={mapPickerResolving}
+                    onClick={() => {
+                      setMapPickerField(null);
+                      setMapPickerPoint(null);
+                    }}
+                  >
+                    {t("cancel")}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
         {activeModule === "map" && (
           <section className="module">
             <div className="module-heading">
@@ -6128,6 +6746,22 @@ export default function App() {
                 <p className="eyebrow">Campus movement</p>
                 <h1>Transportation</h1>
               </div>
+              <label className="sort-control">
+                <ArrowUpDown size={16} aria-hidden="true" />
+                <span>Sort</span>
+                <select
+                  value={requestSort}
+                  onChange={(event) =>
+                    setRequestSort(
+                      event.target.value as (typeof requestSortOptions)[number],
+                    )
+                  }
+                >
+                  {requestSortOptions.map((option) => (
+                    <option key={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="filter-row transport-filter-row" aria-label="Transportation place filters">
               {transportPlaceFilters.map((place) => (
@@ -6145,7 +6779,7 @@ export default function App() {
             <div className="requests-layout">
               <section className="panel request-form-panel">
                 <div className="panel-heading">
-                  <h2>Post request</h2>
+                  <h2>{editingRequestId ? "Edit request" : "Post request"}</h2>
                   <CarFront size={18} aria-hidden="true" />
                 </div>
                 <form className="stacked-form" onSubmit={handleRequestSubmit}>
@@ -6222,28 +6856,33 @@ export default function App() {
                         className="secondary-button"
                         type="button"
                         onClick={locateMeForRequest}
+                        disabled={locatingRequest}
                       >
                         <Navigation size={16} aria-hidden="true" />
-                        Locate me
+                        {locatingRequest ? (
+                          <>
+                            Locating<span className="loading-dots" aria-hidden="true" />
+                          </>
+                        ) : (
+                          "Locate me"
+                        )}
                       </button>
-                      <a
+                      <button
                         className="ghost-button link-button"
-                        href={googleMapsSearchUrl(requestDraft.pickup)}
-                        target="_blank"
-                        rel="noreferrer"
+                        type="button"
+                        onClick={() => openRequestMapPicker("pickup")}
                       >
                         <MapPin size={16} aria-hidden="true" />
-                        Open pickup map
-                      </a>
-                      <a
+                        Select pickup pin
+                      </button>
+                      <button
                         className="ghost-button link-button"
-                        href={googleMapsSearchUrl(requestDraft.dropoff)}
-                        target="_blank"
-                        rel="noreferrer"
+                        type="button"
+                        onClick={() => openRequestMapPicker("dropoff")}
                       >
                         <Route size={16} aria-hidden="true" />
-                        Open drop-off map
-                      </a>
+                        Select drop-off pin
+                      </button>
                     </div>
                     {(requestDraft.pickupLat || requestDraft.dropoffLat) && (
                       <p className="fine-print">
@@ -6356,10 +6995,25 @@ export default function App() {
                       placeholder="Passenger count, item size, gate details"
                     />
                   </label>
-                  <button className="primary-button full-width" type="submit">
-                    <Plus size={17} aria-hidden="true" />
-                    Post request
-                  </button>
+                  <div className="card-actions">
+                    <button className="primary-button full-width" type="submit">
+                      {editingRequestId ? (
+                        <Check size={17} aria-hidden="true" />
+                      ) : (
+                        <Plus size={17} aria-hidden="true" />
+                      )}
+                      {editingRequestId ? "Save request" : "Post request"}
+                    </button>
+                    {editingRequestId && (
+                      <button
+                        className="ghost-button full-width"
+                        type="button"
+                        onClick={cancelRequestEdit}
+                      >
+                        {t("cancel")}
+                      </button>
+                    )}
+                  </div>
                 </form>
               </section>
 
@@ -6421,32 +7075,26 @@ export default function App() {
                         <Route size={17} aria-hidden="true" />
                         <span>{request.dropoff}</span>
                       </div>
-                      {(request.pickupMapUrl || request.dropoffMapUrl) && (
-                        <div className="map-link-row">
-                          {request.pickupMapUrl && (
-                            <a
-                              className="ghost-button mini-button link-button"
-                              href={request.pickupMapUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <MapPin size={14} aria-hidden="true" />
-                              Pickup map
-                            </a>
-                          )}
-                          {request.dropoffMapUrl && (
-                            <a
-                              className="ghost-button mini-button link-button"
-                              href={request.dropoffMapUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <Route size={14} aria-hidden="true" />
-                              Drop off map
-                            </a>
-                          )}
-                        </div>
-                      )}
+                      <div className="map-link-row">
+                        <a
+                          className="ghost-button mini-button link-button"
+                          href={request.pickupMapUrl ?? googleMapsSearchUrl(request.pickup)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <MapPin size={14} aria-hidden="true" />
+                          Pickup location
+                        </a>
+                        <a
+                          className="ghost-button mini-button link-button"
+                          href={request.dropoffMapUrl ?? googleMapsSearchUrl(request.dropoff)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <Route size={14} aria-hidden="true" />
+                          Drop-off location
+                        </a>
+                      </div>
                       <p>{request.notes || "No extra notes."}</p>
                       {translatedItems[`request-${request.id}`] && (
                         <p className="translation-box">
@@ -6455,6 +7103,28 @@ export default function App() {
                       )}
                       {requestActionId === request.id && (
                         <div className="message-actions request-actions">
+                          {isCurrentUserEntity(
+                            request.requesterId,
+                            request.requester,
+                          ) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => beginEditRequest(request)}
+                              >
+                                <Pencil size={14} aria-hidden="true" />
+                                {t("edit")}
+                              </button>
+                              <button
+                                className="danger-text"
+                                type="button"
+                                onClick={() => deleteRequest(request.id)}
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                                {t("delete")}
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() =>
@@ -6471,6 +7141,9 @@ export default function App() {
                           <Clock3 size={15} aria-hidden="true" />
                           {formatSchedule(request.schedule)}
                         </span>
+                        {request.createdAt && (
+                          <span>Posted {formatDate(request.createdAt)}</span>
+                        )}
                         <span>
                           <Banknote size={15} aria-hidden="true" />
                           {request.paymentPreference ?? "Cash"}
@@ -6488,6 +7161,29 @@ export default function App() {
                         </button>
                       )}
                       <div className="card-actions">
+                        {isCurrentUserEntity(
+                          request.requesterId,
+                          request.requester,
+                        ) && (
+                          <>
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => beginEditRequest(request)}
+                            >
+                              <Pencil size={16} aria-hidden="true" />
+                              Edit
+                            </button>
+                            <button
+                              className="secondary-button danger-text"
+                              type="button"
+                              onClick={() => deleteRequest(request.id)}
+                            >
+                              <Trash2 size={16} aria-hidden="true" />
+                              Delete
+                            </button>
+                          </>
+                        )}
                         {request.status === "Open" &&
                           !isCurrentUserEntity(
                             request.requesterId,

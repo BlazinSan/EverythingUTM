@@ -15,9 +15,9 @@ Deno.serve(async (request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+  if (!supabaseUrl || !anonKey) {
     return new Response(
-      JSON.stringify({ ok: false, reason: "Supabase deletion secrets are missing" }),
+      JSON.stringify({ ok: false, reason: "Supabase deletion config is missing" }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -38,6 +38,22 @@ Deno.serve(async (request) => {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  if (!serviceRoleKey) {
+    const { error: rpcError } = await userClient.rpc(
+      "delete_everythingutm_current_user",
+    );
+    return new Response(
+      JSON.stringify({
+        ok: !rpcError,
+        reason: rpcError?.message,
+      }),
+      {
+        status: rpcError ? 500 : 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {

@@ -31,15 +31,43 @@ export async function handler(event) {
 
   const authHeader = event.headers.authorization || event.headers.Authorization || "";
   const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE;
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   if (!accessToken) {
     return json(401, { ok: false, reason: "Missing signed-in session" });
   }
-  if (!serviceRoleKey || !anonKey) {
+  if (!anonKey) {
     return json(500, {
       ok: false,
-      reason: "Missing Supabase service role credentials on Netlify",
+      reason: "Online account deletion is not configured. Missing SUPABASE_ANON_KEY on Netlify.",
+    });
+  }
+
+  if (!serviceRoleKey) {
+    const rpcResponse = await supabaseFetch(
+      "/rest/v1/rpc/delete_everythingutm_current_user",
+      {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    const rpcText = await rpcResponse.text().catch(() => "");
+    if (rpcResponse.ok) {
+      return json(200, { ok: true });
+    }
+    return json(500, {
+      ok: false,
+      reason:
+        rpcText ||
+        "Online account deletion RPC is not installed yet. Apply the Supabase migration or add SUPABASE_SERVICE_ROLE_KEY to Netlify.",
     });
   }
 
