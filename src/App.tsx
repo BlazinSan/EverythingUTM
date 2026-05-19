@@ -768,6 +768,45 @@ function hashForModule(module: ModuleKey) {
   return `#${moduleSlugs[module]}`;
 }
 
+type AuthReturnTarget = "profile" | "reset-password";
+
+const AUTH_NEXT_STORAGE_KEY = "everything-utm:auth-next";
+
+function readStoredAuthTarget(): AuthReturnTarget | null {
+  try {
+    const value = window.localStorage.getItem(AUTH_NEXT_STORAGE_KEY);
+    return value === "profile" || value === "reset-password" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeAuthTarget(target: AuthReturnTarget) {
+  try {
+    window.localStorage.setItem(AUTH_NEXT_STORAGE_KEY, target);
+  } catch {
+    // Authentication still works without local storage; the redirect just lands on home.
+  }
+}
+
+function clearStoredAuthTarget() {
+  try {
+    window.localStorage.removeItem(AUTH_NEXT_STORAGE_KEY);
+  } catch {
+    // Ignore private browsing/local storage failures.
+  }
+}
+
+function clearEverythingUtmStorage() {
+  try {
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith("everything-utm:"))
+      .forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // The in-memory React state is still cleared by the caller.
+  }
+}
+
 function isSupabaseAuthHash(hash = window.location.hash) {
   const value = hash.replace(/^#/, "");
   return (
@@ -779,7 +818,11 @@ function isSupabaseAuthHash(hash = window.location.hash) {
   );
 }
 
-function authReturnTarget() {
+function authReturnTarget(): AuthReturnTarget | null {
+  const storedTarget = readStoredAuthTarget();
+  if (storedTarget) {
+    return storedTarget;
+  }
   const params = new URLSearchParams(window.location.search);
   const next = params.get("next");
   if (next === "profile") {
@@ -1844,9 +1887,7 @@ export default function App() {
   );
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [routeNotFound, setRouteNotFound] = useState(() => isInvalidAppRoute());
-  const [authReady, setAuthReady] = useState(
-    () => !isSupabaseConfigured || !authReturnTarget(),
-  );
+  const [authReady, setAuthReady] = useState(() => !isSupabaseConfigured);
   const [guestMode, setGuestMode] = useLocalStorageState(
     "everything-utm:guest-mode",
     false,
@@ -1887,13 +1928,14 @@ export default function App() {
   const [profileReviews, setProfileReviews] = useLocalStorageState<
     ProfileReview[]
   >("everything-utm:profile-reviews", [], {
+    pollMs: 0,
     reloadKey: onlineReloadKey,
     syncOnline: shouldSyncOnline,
   });
   const [marketplace, setMarketplace] = useLocalStorageState<MarketplaceItem[]>(
     "everything-utm:marketplace",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [favourites, setFavourites] = useLocalStorageState<string[]>(
     "everything-utm:favourites",
@@ -1902,22 +1944,22 @@ export default function App() {
   const [messages, setMessages] = useLocalStorageState<ChatMessage[]>(
     "everything-utm:messages",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [questions, setQuestions] = useLocalStorageState<Question[]>(
     "everything-utm:questions",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [papers, setPapers] = useLocalStorageState<PastPaper[]>(
     "everything-utm:papers",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [requests, setRequests] = useLocalStorageState<ServiceRequest[]>(
     "everything-utm:requests",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
 
   const [marketCategory, setMarketCategory] = useState("All");
@@ -2099,36 +2141,114 @@ export default function App() {
       setAuthReady(true);
       return;
     }
+    const supabaseClient = supabase;
     let mounted = true;
+    let validationRun = 0;
+
+    const openProfileAfterAuth = () => {
+      clearStoredAuthTarget();
+      setPasswordRecoveryMode(false);
+      setRouteNotFound(false);
+      setActiveModuleState("profile");
+      setPageDirection("forward");
+      window.history.replaceState(null, "", `/${hashForModule("profile")}`);
+    };
+
+    const verifySession = async (session: Session | null) => {
+      if (!session) {
+        return null;
+      }
+      const { data, error } = await withTimeout(
+        supabaseClient.auth.getUser(session.access_token),
+        6_000,
+        "Session verification timed out. Please sign in again.",
+      );
+      if (error || !data.user) {
+        await supabaseClient.auth.signOut().catch(() => undefined);
+        return null;
+      }
+      return { ...session, user: data.user };
+    };
+
+    const commitSession = (
+      session: Session | null,
+      target: AuthReturnTarget | null,
+      event: string,
+    ) => {
+      const run = ++validationRun;
+      if (!session) {
+        setAuthSession(null);
+        setAuthReady(true);
+        return;
+      }
+
+      void verifySession(session)
+        .then((verifiedSession) => {
+          if (!mounted || run !== validationRun) {
+            return;
+          }
+          setAuthSession(verifiedSession);
+          setAuthReady(true);
+          if (!verifiedSession) {
+            clearStoredAuthTarget();
+            showNotice(
+              "Your sign-in session expired. Please sign in again.",
+              "error",
+            );
+            return;
+          }
+          setGuestMode(false);
+          if (target === "reset-password" || event === "PASSWORD_RECOVERY") {
+            clearStoredAuthTarget();
+            setPasswordRecoveryMode(true);
+            setAuthMode("signin");
+            showNotice("Enter a new password to finish resetting your account.");
+            return;
+          }
+          if (target === "profile" || event === "SIGNED_IN") {
+            openProfileAfterAuth();
+          }
+        })
+        .catch((error: unknown) => {
+          if (!mounted || run !== validationRun) {
+            return;
+          }
+          setAuthSession(null);
+          setAuthReady(true);
+          clearStoredAuthTarget();
+          showNotice(
+            error instanceof Error
+              ? error.message
+              : "Session verification failed. Please sign in again.",
+            "error",
+          );
+        });
+    };
+
     const returnTarget = authReturnTarget();
     if (returnTarget === "reset-password") {
       setPasswordRecoveryMode(true);
       setAuthMode("signin");
     }
     withTimeout(
-      supabase.auth.getSession(),
-      8_000,
-      "Supabase session check is taking too long. Try again in a moment.",
+      supabaseClient.auth.getSession(),
+      6_000,
+      "Supabase session check is taking too long. Please sign in again.",
     )
       .then(({ data }) => {
         if (!mounted) {
           return;
         }
-        setAuthSession(data.session);
-        setAuthReady(true);
-        if (data.session && returnTarget === "profile") {
-          setRouteNotFound(false);
-          setActiveModuleState("profile");
-          setPageDirection("forward");
-          window.history.replaceState(null, "", hashForModule("profile"));
-        }
+        commitSession(data.session, returnTarget, "INITIAL_SESSION");
       })
       .catch((error: unknown) => {
         if (!mounted) {
           return;
         }
+        validationRun += 1;
         setAuthSession(null);
         setAuthReady(true);
+        clearStoredAuthTarget();
         showNotice(
           error instanceof Error
             ? error.message
@@ -2138,26 +2258,18 @@ export default function App() {
       });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthSession(session);
-      setAuthReady(true);
-      if (session) {
-        setGuestMode(false);
-      }
-      if (
-        session &&
-        (_event === "SIGNED_IN" || authReturnTarget() === "profile")
-      ) {
-        setRouteNotFound(false);
-        setActiveModuleState("profile");
-        setPageDirection("forward");
-        window.history.replaceState(null, "", hashForModule("profile"));
-      }
+    } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+      const target = authReturnTarget();
       if (_event === "PASSWORD_RECOVERY") {
         setPasswordRecoveryMode(true);
         setAuthMode("signin");
-        showNotice("Enter a new password to finish resetting your account.");
       }
+      window.setTimeout(() => {
+        if (!mounted) {
+          return;
+        }
+        commitSession(session, target, _event);
+      }, 0);
     });
     return () => {
       mounted = false;
@@ -2942,6 +3054,7 @@ export default function App() {
           return;
         }
 
+        storeAuthTarget("profile");
         const { data, error } = await withTimeout(
           supabase.auth.signUp({
             email: authForm.email.trim(),
@@ -2951,13 +3064,14 @@ export default function App() {
                 name: authForm.name.trim(),
                 sex: authForm.sex,
               },
-              emailRedirectTo: `${window.location.origin}/?next=profile`,
+              emailRedirectTo: window.location.origin,
             },
           }),
           10_000,
           "Signup is taking too long. Supabase may be busy, please try again.",
         );
         if (error) {
+          clearStoredAuthTarget();
           showNotice(
             error.message.toLowerCase().includes("rate limit")
               ? "Email sending is busy. Try Google sign-in or wait before requesting another email."
@@ -2971,6 +3085,7 @@ export default function App() {
           Array.isArray(data.user.identities) &&
           data.user.identities.length === 0
         ) {
+          clearStoredAuthTarget();
           showNotice("This email already has an EverythingUTM account", "error");
           return;
         }
@@ -2993,6 +3108,7 @@ export default function App() {
             : "Account created. Check your email, then sign in to finish your profile setup.",
         );
         if (data.session) {
+          clearStoredAuthTarget();
           openOwnProfile();
         }
         return;
@@ -3012,6 +3128,7 @@ export default function App() {
       }
       setAuthSession(data.session);
       setGuestMode(false);
+      clearStoredAuthTarget();
       showNotice("Signed in. Opening your profile setup.");
       openOwnProfile();
     } finally {
@@ -3029,11 +3146,12 @@ export default function App() {
     }
     setAuthAction("google");
     try {
+      storeAuthTarget("profile");
       const { data, error } = await withTimeout(
         supabase.auth.signInWithOAuth({
           provider: "google",
           options: {
-            redirectTo: `${window.location.origin}/?next=profile`,
+            redirectTo: window.location.origin,
             skipBrowserRedirect: true,
           },
         }),
@@ -3041,11 +3159,13 @@ export default function App() {
         "Google sign-in is taking too long. Please try again.",
       );
       if (error) {
+        clearStoredAuthTarget();
         showNotice(error.message, "error");
         setAuthAction(null);
         return;
       }
       if (!data.url) {
+        clearStoredAuthTarget();
         showNotice("Google sign-in did not return a redirect link", "error");
         setAuthAction(null);
         return;
@@ -3053,6 +3173,7 @@ export default function App() {
       showNotice("Opening Google sign-in...");
       window.location.assign(data.url);
     } catch (error) {
+      clearStoredAuthTarget();
       showNotice(
         error instanceof Error
           ? error.message
@@ -3084,12 +3205,19 @@ export default function App() {
       const email = authForm.email.trim().toLowerCase();
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/?next=reset-password&type=recovery`,
+          redirectTo: window.location.origin,
         }),
         8_000,
         "Password reset is taking too long. Please try again.",
       );
       if (error) {
+        if (error.message.includes("Password reset is taking too long")) {
+          setResetEmailSentAt(Date.now());
+          showNotice(
+            "If that email is registered, a reset link will be sent shortly.",
+          );
+          return;
+        }
         showNotice(
           error.message.toLowerCase().includes("rate limit")
             ? "Password email is rate limited. Try again later or use Google sign-in."
@@ -3103,10 +3231,19 @@ export default function App() {
         "If that email is registered, a reset link will be sent shortly.",
       );
     } catch (error) {
-      showNotice(
+      const message =
         error instanceof Error
           ? error.message
-          : "Password reset failed. Please try again.",
+          : "Password reset failed. Please try again.";
+      if (message.includes("Password reset is taking too long")) {
+        setResetEmailSentAt(Date.now());
+        showNotice(
+          "If that email is registered, a reset link will be sent shortly.",
+        );
+        return;
+      }
+      showNotice(
+        message,
         "error",
       );
     } finally {
@@ -4548,14 +4685,34 @@ export default function App() {
   async function deleteLocalAccount() {
     if (deleteAccountLoading) return;
 
+    if (!authSession) {
+      showNotice("Sign in before deleting your account", "error");
+      return;
+    }
+
     if (!deleteAccountArmed) {
+      if (
+        !window.confirm(
+          "Delete your EverythingUTM account? This permanently removes your Supabase account and cannot be undone.",
+        )
+      ) {
+        return;
+      }
       setDeleteAccountArmed(true);
-      showNotice("Press delete again to confirm", "error");
+      showNotice("Type DELETE, then press confirm delete account.", "error");
       return;
     }
 
     if (deleteConfirmText !== "DELETE") {
       showNotice('Type DELETE to confirm account deletion', "error");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "Final confirmation: permanently delete your EverythingUTM account now?",
+      )
+    ) {
       return;
     }
 
@@ -4577,8 +4734,14 @@ export default function App() {
     try {
       await deleteAccountOnline();
 
-      await supabase?.auth.signOut().catch(() => undefined);
-      window.localStorage.clear();
+      await withTimeout(
+        supabase
+          ? supabase.auth.signOut().then(() => undefined)
+          : Promise.resolve(),
+        4_000,
+        "Sign out after deletion timed out",
+      ).catch(() => undefined);
+      clearEverythingUtmStorage();
       setDeleteAccountArmed(false);
       setDeleteConfirmText("");
       setAuthSession(null);
@@ -4676,18 +4839,18 @@ export default function App() {
       const sendBugReportEmail = async () => {
         let lastError = "Bug report email failed";
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
         try {
           const response = await fetch("/.netlify/functions/report-bug", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
             signal: controller.signal,
-          }).catch(() => null);
+          });
           if (response) {
             const responsePayload = await response.json().catch(() => ({}));
             if (response.ok && responsePayload?.ok === true) {
-              return;
+              return "sent";
             }
             throw new Error(
               responsePayload?.reason ||
@@ -4695,6 +4858,9 @@ export default function App() {
             );
           }
         } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return "submitted";
+          }
           lastError =
             error instanceof Error ? error.message : "Bug report email failed";
         } finally {
@@ -4703,12 +4869,12 @@ export default function App() {
 
         const edgeResult = await withTimeout(
           supabaseClient.functions.invoke("report-bug", { body: payload }),
-          20000,
+          8_000,
           "Bug report email timed out",
         ).catch((invokeError: unknown) => ({ data: null, error: invokeError }));
 
         if (!edgeResult.error && edgeResult.data?.ok === true) {
-          return;
+          return "sent";
         }
 
         throw new Error(
@@ -4719,7 +4885,15 @@ export default function App() {
       };
 
       try {
-        await sendBugReportEmail();
+        const sendStatus = await sendBugReportEmail();
+        setBugReportDraft("");
+        showNotice(
+          sendStatus === "submitted"
+            ? "Bug report submitted. Email delivery may take a moment."
+            : "Bug report emailed successfully",
+        );
+        addNotification("Bug report received", "Thanks for the report.", "settings");
+        return;
       } catch (error) {
         try {
           await storeBugReportFallback(
@@ -4738,10 +4912,6 @@ export default function App() {
         );
         return;
       }
-
-      setBugReportDraft("");
-      showNotice("Bug report emailed successfully");
-      addNotification("Bug report received", "Thanks for the report.", "settings");
     } finally {
       setBugReportLoading(false);
     }
@@ -8498,6 +8668,7 @@ export default function App() {
                   <label className="delete-confirm-field">
                     <span>Type DELETE to confirm</span>
                     <input
+                      autoFocus
                       value={deleteConfirmText}
                       onChange={(event) => setDeleteConfirmText(event.target.value)}
                     />
