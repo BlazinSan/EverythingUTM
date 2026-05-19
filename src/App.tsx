@@ -2828,7 +2828,7 @@ export default function App() {
                 name: authForm.name.trim(),
                 sex: authForm.sex,
               },
-              emailRedirectTo: `${window.location.origin}#profile`,
+              emailRedirectTo: `${window.location.origin}/#profile`,
             },
           }),
           10_000,
@@ -2910,7 +2910,7 @@ export default function App() {
         supabase.auth.signInWithOAuth({
           provider: "google",
           options: {
-            redirectTo: `${window.location.origin}#profile`,
+            redirectTo: `${window.location.origin}/#profile`,
             skipBrowserRedirect: true,
           },
         }),
@@ -2961,7 +2961,7 @@ export default function App() {
       const email = authForm.email.trim().toLowerCase();
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}#reset-password`,
+          redirectTo: `${window.location.origin}/#reset-password`,
         }),
         8_000,
         "Password reset is taking too long. Please try again.",
@@ -4351,51 +4351,77 @@ export default function App() {
     showNotice("Review posted");
   }
 
+  function withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    message: string,
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        window.setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  }
+
   async function deleteAccountOnline() {
     if (!supabase || !authSession) {
       throw new Error("Sign in before deleting your online account");
     }
 
-    try {
-      const { error: rpcError } = await supabase.rpc(
-        "delete_everythingutm_current_user",
-      );
-      if (!rpcError) {
-        return;
-      }
-    } catch {
-      // Fall back to the deployed deletion functions below.
+    const rpcResult = await withTimeout(
+      Promise.resolve(supabase.rpc("delete_everythingutm_current_user")),
+      12000,
+      "Delete RPC timed out",
+    ).catch(() => null);
+
+    if (rpcResult && !rpcResult.error) {
+      return;
     }
 
-    const edgeResult = await supabase.functions
-      .invoke("delete-account")
-      .catch((error: unknown) => ({ data: null, error }));
+    const edgeResult = await withTimeout(
+      supabase.functions.invoke("delete-account"),
+      15000,
+      "Delete account Edge Function timed out",
+    ).catch((error: unknown) => ({ data: null, error }));
+
     if (!edgeResult.error && edgeResult.data?.ok === true) {
       return;
     }
 
-    const response = await fetch("/.netlify/functions/delete-account", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${authSession.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    }).catch(() => null);
-    if (!response) {
-      throw new Error(
-        edgeResult.error instanceof Error
-          ? edgeResult.error.message
-          : "Online account deletion service is unavailable",
-      );
-    }
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload?.ok !== true) {
-      throw new Error(
-        payload?.reason ||
-          (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
-          "Online account deletion failed",
-      );
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch("/.netlify/functions/delete-account", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authSession.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      }).catch(() => null);
+
+      if (!response) {
+        throw new Error(
+          edgeResult.error instanceof Error
+            ? edgeResult.error.message
+            : "Online account deletion service is unavailable",
+        );
+      }
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(
+          payload?.reason ||
+            (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
+            "Online account deletion failed",
+        );
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   }
 
@@ -4502,37 +4528,21 @@ export default function App() {
       };
 
       const sendBugReportEmail = async () => {
-        const edgeResult = await supabaseClient.functions
-          .invoke("report-bug", { body: payload })
-          .catch((invokeError: unknown) => ({ data: null, error: invokeError }));
+        const edgeResult = await withTimeout(
+          supabaseClient.functions.invoke("report-bug", { body: payload }),
+          20000,
+          "Bug report email timed out",
+        ).catch((invokeError: unknown) => ({ data: null, error: invokeError }));
 
         if (!edgeResult.error && edgeResult.data?.ok === true) {
           return;
         }
 
-        const response = await fetch("/.netlify/functions/report-bug", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }).catch(() => null);
-
-        if (!response) {
-          throw new Error(
-            edgeResult.error instanceof Error
-              ? edgeResult.error.message
-              : "Bug report email service is unavailable",
-          );
-        }
-
-        const responsePayload = await response.json().catch(() => ({}));
-
-        if (!response.ok || responsePayload?.ok !== true) {
-          throw new Error(
-            responsePayload?.reason ||
-              (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
-              "Bug report email failed",
-          );
-        }
+        throw new Error(
+          edgeResult.error instanceof Error
+            ? edgeResult.error.message
+            : edgeResult.data?.reason || "Bug report email failed",
+        );
       };
 
       try {
@@ -4646,7 +4656,11 @@ export default function App() {
               setPasswordRecoveryMode(false);
               setPasswordForm({ password: "", confirmPassword: "" });
               setAuthMode("signin");
-              await supabase?.auth.signOut().catch(() => undefined);
+              await withTimeout(
+                supabase ? supabase.auth.signOut().then(() => {}) : Promise.resolve(),
+                5000,
+                "Sign out timed out",
+              ).catch(() => undefined);
               setAuthSession(null);
               showNotice("Password reset cancelled", "error");
             }}
