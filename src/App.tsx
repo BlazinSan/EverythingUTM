@@ -1901,9 +1901,14 @@ export default function App() {
   const [profileCropOffsetX, setProfileCropOffsetX] = useState(0);
   const [profileCropOffsetY, setProfileCropOffsetY] = useState(0);
   const [profileCropSize, setProfileCropSize] = useState(320);
+  
   const [deleteAccountArmed, setDeleteAccountArmed] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
+
   const [bugReportDraft, setBugReportDraft] = useState("");
+  const [bugReportLoading, setBugReportLoading] = useState(false);
+  
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
   const longPressTimers = useRef<Record<string, number>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -4395,138 +4400,168 @@ export default function App() {
   }
 
   async function deleteLocalAccount() {
+    if (deleteAccountLoading) return;
+
     if (!deleteAccountArmed) {
       setDeleteAccountArmed(true);
       showNotice("Press delete again to confirm", "error");
       return;
     }
+
     if (deleteConfirmText !== "DELETE") {
       showNotice('Type DELETE to confirm account deletion', "error");
       return;
     }
+
+    setDeleteAccountLoading(true);
+
     try {
       await deleteAccountOnline();
+
+      await supabase?.auth.signOut().catch(() => undefined);
+      window.localStorage.clear();
+      setDeleteAccountArmed(false);
+      setDeleteConfirmText("");
+      setAuthSession(null);
+      setGuestMode(false);
+      setProfile(emptyProfile());
+      setProfileDraft(emptyProfile());
+      setSelectedProfileName("");
+      navigateToModule("home", { skipProfileGuard: true });
+      setAuthMode("signin");
+      showNotice("Account deleted online.");
     } catch (error) {
       showNotice(
-        error instanceof Error
-          ? error.message
-          : "Online account deletion failed",
+        error instanceof Error ? error.message : "Online account deletion failed",
         "error",
       );
-      return;
+    } finally {
+      setDeleteAccountLoading(false);
     }
-    await supabase?.auth.signOut().catch(() => undefined);
-    window.localStorage.clear();
-    setDeleteAccountArmed(false);
-    setDeleteConfirmText("");
-    setAuthSession(null);
-    setGuestMode(false);
-    setProfile(emptyProfile());
-    setProfileDraft(emptyProfile());
-    setSelectedProfileName("");
-    navigateToModule("home", { skipProfileGuard: true });
-    setAuthMode("signin");
-    showNotice("Account deleted online.");
   }
 
   async function submitBugReport() {
+    if (bugReportLoading) return;
+
     if (!bugReportDraft.trim()) {
       showNotice("Bug report needs details", "error");
       return;
     }
-    const payload = {
-      userName: isSignedIn ? currentDisplayName : "Not signed in",
-      userEmail: authSession?.user.email ?? "not signed in",
-      dateTime: new Date().toISOString(),
-      details: bugReportDraft.trim(),
-    };
+
     if (!supabase) {
       showNotice("Bug report email needs Supabase configuration", "error");
       return;
     }
-    const supabaseClient = supabase;
-    const storeBugReportFallback = async (emailError: string) => {
-      const report = {
-        id: uid("bug"),
-        userName: payload.userName,
-        userEmail: payload.userEmail,
-        dateTime: payload.dateTime,
-        details: payload.details,
-        emailed: false,
-        emailError,
-      };
-      const { error: tableError } = await supabaseClient.from("bug_reports").insert({
-        user_name: report.userName,
-        user_email: report.userEmail,
-        details: report.details,
-        reported_at: report.dateTime,
-        emailed: false,
-        email_error: emailError,
-      });
-      if (!tableError) {
-        return true;
-      }
-      const currentReports = await loadSupabaseState<Array<typeof report>>(
-        "everything-utm:bug-reports",
-      ).catch(() => []);
-      await saveSupabaseState("everything-utm:bug-reports", [
-        report,
-        ...((currentReports ?? []) as Array<typeof report>),
-      ].slice(0, 200));
-      return true;
-    };
-    const sendBugReportEmail = async () => {
-      const edgeResult = await supabaseClient.functions
-        .invoke("report-bug", { body: payload })
-        .catch((invokeError: unknown) => ({ data: null, error: invokeError }));
-      if (!edgeResult.error && edgeResult.data?.ok === true) {
-        return;
-      }
 
-      const response = await fetch("/.netlify/functions/report-bug", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }).catch(() => null);
-      if (!response) {
-        throw new Error(
-          edgeResult.error instanceof Error
-            ? edgeResult.error.message
-            : "Bug report email service is unavailable",
-        );
-      }
-      const responsePayload = await response.json().catch(() => ({}));
-      if (!response.ok || responsePayload?.ok !== true) {
-        throw new Error(
-          responsePayload?.reason ||
-            (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
-            "Bug report email failed",
-        );
-      }
-    };
+    setBugReportLoading(true);
 
     try {
-      await sendBugReportEmail();
-    } catch (error) {
+      const payload = {
+        userName: isSignedIn ? currentDisplayName : "Not signed in",
+        userEmail: authSession?.user.email ?? "not signed in",
+        dateTime: new Date().toISOString(),
+        details: bugReportDraft.trim(),
+      };
+
+      const supabaseClient = supabase;
+
+      const storeBugReportFallback = async (emailError: string) => {
+        const report = {
+          id: uid("bug"),
+          userName: payload.userName,
+          userEmail: payload.userEmail,
+          dateTime: payload.dateTime,
+          details: payload.details,
+          emailed: false,
+          emailError,
+        };
+
+        const { error: tableError } = await supabaseClient.from("bug_reports").insert({
+          user_name: report.userName,
+          user_email: report.userEmail,
+          details: report.details,
+          reported_at: report.dateTime,
+          emailed: false,
+          email_error: emailError,
+        });
+
+        if (!tableError) {
+          return true;
+        }
+
+        const currentReports = await loadSupabaseState<Array<typeof report>>(
+          "everything-utm:bug-reports",
+        ).catch(() => []);
+
+        await saveSupabaseState("everything-utm:bug-reports", [
+          report,
+          ...((currentReports ?? []) as Array<typeof report>),
+        ].slice(0, 200));
+
+        return true;
+      };
+
+      const sendBugReportEmail = async () => {
+        const edgeResult = await supabaseClient.functions
+          .invoke("report-bug", { body: payload })
+          .catch((invokeError: unknown) => ({ data: null, error: invokeError }));
+
+        if (!edgeResult.error && edgeResult.data?.ok === true) {
+          return;
+        }
+
+        const response = await fetch("/.netlify/functions/report-bug", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+
+        if (!response) {
+          throw new Error(
+            edgeResult.error instanceof Error
+              ? edgeResult.error.message
+              : "Bug report email service is unavailable",
+          );
+        }
+
+        const responsePayload = await response.json().catch(() => ({}));
+
+        if (!response.ok || responsePayload?.ok !== true) {
+          throw new Error(
+            responsePayload?.reason ||
+              (edgeResult.error instanceof Error ? edgeResult.error.message : "") ||
+              "Bug report email failed",
+          );
+        }
+      };
+
       try {
-        await storeBugReportFallback(
-          error instanceof Error
-            ? error.message
-            : "Bug report email function unavailable",
+        await sendBugReportEmail();
+      } catch (error) {
+        try {
+          await storeBugReportFallback(
+            error instanceof Error
+              ? error.message
+              : "Bug report email function unavailable",
+          );
+        } catch {
+          showNotice("Bug report could not be saved", "error");
+          return;
+        }
+
+        showNotice(
+          "Bug report saved, but email delivery is not configured on the server yet",
+          "error",
         );
-      } catch {
-        showNotice("Bug report could not be saved", "error");
         return;
       }
-      showNotice(
-        "Bug report saved, but email delivery is not configured on the server yet",
-        "error",
-      );
-      return;
+
+      setBugReportDraft("");
+      showNotice("Bug report emailed successfully");
+      addNotification("Bug report received", "Thanks for the report.", "settings");
+    } finally {
+      setBugReportLoading(false);
     }
-    setBugReportDraft("");
-    showNotice("Bug report emailed successfully");
-    addNotification("Bug report received", "Thanks for the report.", "settings");
   }
 
   if (!authReady) {
@@ -8217,9 +8252,10 @@ export default function App() {
                   className="secondary-button"
                   type="button"
                   onClick={submitBugReport}
+                  disabled={bugReportLoading}
                 >
                   <Send size={16} aria-hidden="true" />
-                  {t("reportBug")}
+                  {bugReportLoading ? "Sending..." : t("reportBug")}
                 </button>
               </section>
 
@@ -8242,9 +8278,14 @@ export default function App() {
                   className="danger-button"
                   type="button"
                   onClick={deleteLocalAccount}
+                  disabled={deleteAccountLoading}
                 >
                   <Trash2 size={16} aria-hidden="true" />
-                  {deleteAccountArmed ? "Confirm delete account" : t("deleteAccount")}
+                  {deleteAccountLoading
+                    ? "Deleting..."
+                    : deleteAccountArmed
+                      ? "Confirm delete account"
+                      : t("deleteAccount")}
                 </button>
               </section>
             </div>
