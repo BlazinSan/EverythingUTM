@@ -94,6 +94,7 @@ export type Question = {
   tags: string[];
   votes: number;
   resolved: boolean;
+  createdAt?: string;
   editedAt?: string;
   answers: Answer[];
 };

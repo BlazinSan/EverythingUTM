@@ -7,6 +7,7 @@ overpass-*.json
 .env.*
 !.env.example
 *.local
+android/.idea/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

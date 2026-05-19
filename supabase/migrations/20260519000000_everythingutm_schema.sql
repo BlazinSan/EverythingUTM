@@ -87,6 +87,7 @@ begin
   profile_name := coalesce(
     new.raw_user_meta_data ->> 'name',
     new.raw_user_meta_data ->> 'full_name',
+    split_part(new.email, '@', 1),
     ''
   );
   profile_sex := coalesce(new.raw_user_meta_data ->> 'sex', '');

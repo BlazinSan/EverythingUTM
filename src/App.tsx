@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type ChangeEvent,
   type FormEvent,
   useEffect,
@@ -9,9 +10,12 @@ import {
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import {
+  ArrowUpDown,
   BadgeCheck,
   Banknote,
   Bug,
+  Building2,
+  Cake,
   Bell,
   Camera,
   CarFront,
@@ -28,10 +32,12 @@ import {
   FileText,
   Flag,
   FolderArchive,
+  GraduationCap,
   Heart,
   HelpCircle,
   Home,
   ImagePlus,
+  IdCard,
   Languages,
   MapPin,
   MapPinned,
@@ -43,6 +49,7 @@ import {
   Navigation,
   PackagePlus,
   Pencil,
+  Phone,
   Plus,
   QrCode,
   Route,
@@ -75,19 +82,14 @@ import {
   faculties,
   marketplaceFilters,
   marketplaceCategories,
-  seedMarketplace,
-  seedMessages,
-  seedPapers,
-  seedProfileReviews,
-  seedProfiles,
-  seedQuestions,
-  seedRequests,
 } from "./data";
 import {
   isSupabaseConfigured,
   loadSupabaseState,
   saveSupabaseState,
+  supabase,
 } from "./lib/supabase";
+import type { Session } from "@supabase/supabase-js";
 import type {
   AppSettings,
   CampusLocation,
@@ -168,6 +170,77 @@ const paperSemesterOptions = [
 ];
 
 const paperTestOptions = ["Test 1", "Test 2", "Final", "Assignment"];
+
+const marketplaceSortOptions = [
+  "Date posted",
+  "Price low to high",
+  "Price high to low",
+] as const;
+
+const questionSortOptions = [
+  "Date posted",
+  "Most likes/upvotes",
+  "Least likes/upvotes",
+] as const;
+
+const regularBusTimes = [
+  "07:00",
+  "07:30",
+  "08:00",
+  "08:30",
+  "09:00",
+  "09:30",
+  "10:00",
+  "11:30",
+  "12:00",
+  "12:30",
+  "13:00",
+  "13:30",
+  "14:00",
+  "14:30",
+  "16:00",
+  "16:30",
+  "17:00",
+  "17:30",
+  "18:00",
+  "20:00",
+  "22:00",
+  "23:00",
+];
+
+const weekendBusTimes = [
+  "07:30",
+  "08:00",
+  "09:00",
+  "09:30",
+  "11:00",
+  "11:30",
+  "13:00",
+  "13:30",
+  "15:00",
+  "15:30",
+  "17:00",
+  "17:30",
+];
+
+const bdrBusTimes = [
+  "07:00",
+  "07:30",
+  "08:00",
+  "08:30",
+  "09:00",
+  "09:30",
+  "12:00",
+  "12:30",
+  "13:00",
+  "13:30",
+  "14:00",
+  "14:30",
+  "17:00",
+  "17:30",
+  "18:00",
+  "18:30",
+];
 
 const facultyAliases: Record<string, string> = {
   Computing: "Faculty of Computing",
@@ -395,24 +468,44 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
   },
 };
 
-const seedNotifications: NotificationItem[] = [
-  {
-    id: "notif-1",
-    title: "Welcome to EverythingUTM",
-    body: "Your campus hub is ready. Add a listing, ask a question, or request a ride.",
-    module: "home",
-    read: false,
-    timestamp: "2026-05-15T08:00:00.000Z",
-  },
-  {
-    id: "notif-2",
-    title: "Delivery request waiting",
-    body: "A PSZ printout delivery is matched and waiting for payment.",
-    module: "requests",
-    read: false,
-    timestamp: "2026-05-15T11:35:00.000Z",
-  },
-];
+const seedNotifications: NotificationItem[] = [];
+
+const demoDataIds = {
+  marketplace: new Set(["mkt-1", "mkt-2", "mkt-3", "mkt-4", "mkt-5", "mkt-6"]),
+  messages: new Set(["msg-1", "msg-2", "msg-3", "msg-4"]),
+  questions: new Set(["q-1", "q-2"]),
+  papers: new Set(["paper-1", "paper-2"]),
+  requests: new Set(["req-1", "req-2", "req-3"]),
+  notifications: new Set(["notif-1", "notif-2"]),
+  reviews: new Set(["review-1", "review-2"]),
+};
+
+const demoProfileMatricNumbers = new Set([
+  "A23CS0123",
+  "A22CS0456",
+  "A23BE0101",
+  "A21EE0299",
+  "A23CS0777",
+]);
+
+const demoNames = new Set([
+  "Aina",
+  "Aina Rahman",
+  "Aqil",
+  "Amir",
+  "Daniel",
+  "Dapur Kolej",
+  "Farah",
+  "Hafiz",
+  "Hasan Ahmad",
+  "Jia",
+  "Kumar",
+  "Mei Lin",
+  "Nabil",
+  "Nora",
+  "Sara",
+  "Yusuf",
+]);
 
 const languageNames: Record<LanguageCode, string> = {
   en: "English",
@@ -484,6 +577,31 @@ function currentTimeValue(date = new Date()) {
   return date.toTimeString().slice(0, 5);
 }
 
+function dayIndex(day: string) {
+  return dayOfWeekOptions.indexOf(day);
+}
+
+function availableTransportDays(date = new Date()) {
+  const today = currentDayName(date);
+  const start = Math.max(0, dayIndex(today));
+  return dayOfWeekOptions.slice(start);
+}
+
+function compareTimeValues(left: string, right: string) {
+  return left.localeCompare(right);
+}
+
+function toTwelveHourTime(time: string) {
+  const [hourPart, minute = "00"] = time.split(":");
+  const hour = Number(hourPart);
+  if (!Number.isFinite(hour)) {
+    return time;
+  }
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const twelveHour = hour % 12 || 12;
+  return `${twelveHour}:${minute.padStart(2, "0")} ${suffix}`;
+}
+
 const initialListing = {
   title: "",
   category: "Books",
@@ -526,7 +644,7 @@ const initialRequest = {
   scheduleDay: currentDayName(),
   scheduleTime: currentTimeValue(),
   schedule: "",
-  budget: "Ride along for free",
+  budget: "",
   paymentPreference: "DuitNow QR" as PaymentMethod,
   notes: "",
 };
@@ -577,6 +695,12 @@ function formatDate(value: string) {
 }
 
 function formatSchedule(value: string) {
+  const dayTime = value.match(
+    /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) at (\d{2}:\d{2})$/,
+  );
+  if (dayTime) {
+    return `${dayTime[1]} at ${toTwelveHourTime(dayTime[2])}`;
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
@@ -614,14 +738,22 @@ function formatRequestBudget(amount: number, type: ServiceRequest["type"]) {
 }
 
 function parseBudgetInput(value: string) {
-  if (!value.trim() || /free/i.test(value.trim())) {
+  if (!value.trim()) {
     return 0;
   }
-  return Number(value.replace(/[^\d.]/g, "")) || 0;
+  return Math.min(99, Number(value.replace(/\D/g, "")) || 0);
 }
 
 function budgetInputLabel(type: ServiceRequest["type"]) {
   return type === "Delivery" ? "Free delivery" : "Ride along for free";
+}
+
+function sanitizeBudgetInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+  return String(Math.min(99, Number(digits)));
 }
 
 function isDigitalPayment(method?: PaymentMethod) {
@@ -676,6 +808,302 @@ function googleMapsUrlFor(lat: number, lng: number) {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 }
 
+const busStopTimeOverrides: Record<string, Record<string, string[]>> = {
+  "regular-1": {
+    kp: ["07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "12:00", "12:40", "13:20", "14:00", "14:40", "16:50", "17:30", "18:10", "19:45", "20:15"],
+    cp: ["07:45", "08:15", "08:45", "09:15", "09:45", "10:15", "12:20", "13:00", "13:40", "14:20", "15:00", "16:30", "17:10", "17:50", "20:00", "22:00", "23:00"],
+  },
+  "regular-2": {
+    kp: ["07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "11:35", "12:15", "12:55", "13:35", "14:15", "16:20", "17:00", "17:40"],
+    cluster: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:15", "11:55", "12:35", "13:15", "13:55", "14:35", "16:00", "16:40", "17:20", "18:00"],
+  },
+  "regular-3": {
+    kp: ["07:10", "07:40", "08:10", "08:40", "09:10", "09:40", "11:45", "12:25", "13:05", "13:45", "14:25", "16:30", "17:10", "17:50"],
+    cluster: ["07:25", "07:55", "08:25", "08:55", "09:25", "09:55", "11:25", "12:05", "12:45", "13:25", "14:05", "14:45", "16:10", "16:50", "17:30", "18:10"],
+  },
+  "regular-4": {
+    kp: ["07:20", "07:50", "08:20", "08:50", "09:20", "09:50", "12:00", "12:40", "13:20", "14:00", "14:40", "16:45", "17:25", "18:05"],
+    cluster: ["07:35", "08:05", "08:35", "09:05", "09:35", "10:05", "11:40", "12:20", "13:00", "13:40", "14:20", "15:00", "16:25", "17:05", "17:45", "18:25"],
+  },
+  "regular-5": {
+    k910: ["07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "11:35", "12:15", "12:55", "13:35", "14:15", "16:20", "17:00", "17:40", "18:20"],
+    cp: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:15", "11:55", "12:35", "13:15", "13:55", "14:35", "16:00", "16:40", "17:20", "18:00", "18:40"],
+  },
+  "regular-6": {
+    k910: ["07:10", "07:40", "08:10", "08:40", "09:10", "09:40", "11:45", "12:25", "13:05", "13:45", "14:25", "16:30", "17:10", "17:50", "19:45", "20:15"],
+    cp: ["07:25", "07:55", "08:25", "08:55", "09:25", "09:55", "11:25", "12:05", "12:45", "13:25", "14:05", "14:45", "16:10", "16:50", "17:30", "20:00", "22:00", "23:00"],
+  },
+  "regular-7": {
+    k910: ["07:20", "07:50", "08:20", "08:50", "09:20", "09:50", "12:00", "12:40", "13:20", "14:00", "14:40", "16:45", "17:25", "18:05", "18:40"],
+    cp: ["07:35", "08:05", "08:35", "09:05", "09:35", "10:05", "11:40", "12:20", "13:00", "13:40", "14:20", "15:00", "16:25", "17:05", "17:45", "18:25", "19:00"],
+  },
+  "regular-8": {
+    cp: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:45", "12:15", "12:45", "13:45", "14:15", "16:15", "16:45", "17:15", "17:45"],
+    fkt: ["07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "11:30", "12:00", "12:30", "13:00", "14:00", "14:30", "16:00", "16:30", "17:00", "17:30", "18:00"],
+  },
+  "regular-9": {
+    kdoj: ["07:00", "08:00", "09:00", "11:00", "12:00", "13:00", "14:00", "16:30", "17:30"],
+    cluster: ["07:30", "08:30", "09:30", "11:30", "12:30", "13:30", "14:30", "16:00", "17:00", "18:00"],
+  },
+  "regular-10": {
+    kdoj: ["07:15", "08:15", "09:15", "11:15", "12:15", "13:15", "14:15", "16:45", "17:45"],
+    cluster: ["07:45", "08:45", "09:45", "11:45", "12:45", "13:45", "14:45", "16:15", "17:15", "18:15"],
+  },
+  "regular-11": {
+    kdoj: ["07:30", "08:30", "09:30", "11:30", "12:30", "13:30", "14:30", "17:00", "18:00"],
+    cluster: ["08:00", "09:00", "10:00", "12:00", "13:00", "14:00", "15:00", "16:30", "17:30", "18:30"],
+  },
+  "regular-12": {
+    kdoj: ["07:45", "08:45", "09:45", "11:45", "12:45", "13:45", "14:45", "17:15", "18:15"],
+    cluster: ["08:15", "09:15", "10:15", "12:15", "13:15", "14:15", "15:15", "16:45", "17:45", "18:45"],
+  },
+  "regular-13": {
+    kdoj: ["07:00", "08:00", "10:00", "11:00", "15:15", "16:15", "17:30"],
+    cluster: ["07:30", "08:30", "10:30", "11:30", "15:45", "17:00", "18:00"],
+  },
+  "regular-14": {
+    kdoj: ["07:00", "08:00", "10:30", "15:00", "16:00", "17:30", "19:45", "20:15"],
+    cluster: ["07:30", "08:30", "10:00", "11:00", "15:30", "17:00", "18:00"],
+    cp: ["20:00", "22:00", "23:00"],
+  },
+  "regular-15": {
+    ktr: ["07:05", "07:35", "08:05", "08:35", "09:05", "09:35", "11:35", "12:15", "12:55", "13:35", "14:15", "16:25", "17:05", "17:45", "18:25"],
+    fke: ["07:20", "07:50", "08:20", "08:50", "09:20", "09:50", "11:15", "11:55", "12:35", "13:15", "13:55", "14:35", "16:05", "16:45", "17:25", "18:05", "18:45"],
+  },
+  "regular-16": {
+    ktr: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:45", "12:25", "13:05", "13:45", "14:25", "16:35", "17:15", "17:55", "19:45", "20:15"],
+    fke: ["07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "11:25", "12:05", "12:45", "13:25", "14:05", "14:45", "16:15", "16:55", "17:35", "20:00", "22:00", "23:00"],
+  },
+  "regular-17": {
+    ktr: ["07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "11:40", "12:20", "13:00", "13:40", "14:20", "16:20", "17:00", "17:40", "18:20"],
+    fkt: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:20", "12:00", "12:40", "13:20", "14:00", "14:40", "16:00", "16:40", "17:20", "18:00", "18:40"],
+  },
+  "regular-18": {
+    ktr: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:50", "12:30", "13:10", "13:50", "14:30", "16:30", "17:10", "17:50", "18:30"],
+    fkt: ["07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "11:30", "12:10", "12:50", "13:30", "14:10", "14:50", "16:10", "16:50", "17:30", "18:10", "18:50"],
+  },
+  "regular-19": {
+    cp: ["07:15", "07:45", "08:15", "08:45", "09:15", "09:45", "11:20", "12:00", "12:40", "13:20", "14:00", "16:00", "16:40", "17:20", "18:00"],
+    v01: ["07:30", "08:00", "08:30", "09:00", "09:30", "10:00", "11:40", "12:20", "13:00", "13:40", "14:20", "16:20", "17:00", "17:40", "18:20"],
+  },
+  "regular-20": {
+    cp: ["14:30", "15:00", "16:30", "17:00", "17:30", "18:15", "18:45"],
+    stadium: ["14:45", "15:15", "16:45", "17:15", "18:00", "18:30", "19:00"],
+  },
+  "regular-21": {
+    kdoj: ["07:30", "09:00", "11:00", "13:00", "15:00", "17:00"],
+    k910: ["08:00", "09:30", "11:30", "13:30", "15:30", "17:30"],
+  },
+  "regular-22": {
+    kdoj: ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00"],
+    k910: ["08:30", "10:30", "12:30", "14:30", "16:30", "18:30"],
+  },
+  "bdr-1": {
+    kp: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    cp: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-2": {
+    kp: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    cluster: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:00"],
+  },
+  "bdr-3": {
+    k910: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    cp: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-4": {
+    cp: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    fkt: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-5": {
+    kdoj: ["07:00", "08:00", "09:00", "11:45", "12:45", "13:45", "16:45", "17:45"],
+    cluster: ["07:30", "08:30", "09:30", "12:15", "13:15", "14:15", "17:15", "18:15"],
+  },
+  "bdr-6": {
+    kdoj: ["07:15", "08:15", "09:15", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    cluster: ["07:45", "08:45", "09:45", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-7": {
+    kdoj: ["07:30", "08:30", "09:30", "12:15", "13:15", "14:15", "17:15", "18:15"],
+    cluster: ["08:00", "09:00", "10:00", "12:45", "13:45", "14:45", "17:45", "18:45"],
+  },
+  "bdr-8": {
+    ktr: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    fke: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-9": {
+    ktr: ["07:00", "08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+    fkt: ["07:30", "08:30", "09:30", "12:30", "13:30", "14:30", "17:30", "18:30"],
+  },
+  "bdr-10": {
+    cp: ["07:30", "08:30", "11:30", "12:30", "13:30", "16:30", "17:30"],
+    v01: ["08:00", "09:00", "12:00", "13:00", "14:00", "17:00", "18:00"],
+  },
+};
+
+function normalizeBusStop(stop: string) {
+  const normalized = stop
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/centre/g, "center")
+    .replace(/point/g, "point")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (
+    normalized.includes("center point") ||
+    normalized.includes("centerpoint") ||
+    normalized === "cp"
+  ) {
+    return "cp";
+  }
+  if (normalized.includes("kolej perdana") || normalized === "kp") return "kp";
+  if (normalized.includes("kolej 9") || normalized.includes("k9 10")) return "k910";
+  if (normalized.includes("cluster") || normalized.includes("t02") || normalized.includes("t08")) return "cluster";
+  if (normalized.includes("kdoj")) return "kdoj";
+  if (normalized.includes("ktr")) return "ktr";
+  if (normalized.includes("fkt") || normalized.includes("n29")) return "fkt";
+  if (normalized.includes("fke") || normalized.includes("p19")) return "fke";
+  if (normalized.includes("v01")) return "v01";
+  if (normalized.includes("stadium")) return "stadium";
+  return normalized;
+}
+
+function uniqueBusStops(route: { directions: string[] }) {
+  const seen = new Set<string>();
+  return route.directions.filter((stop) => {
+    const key = normalizeBusStop(stop);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function addMinutesToTime(time: string, minutesToAdd: number) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const total = hours * 60 + minutes + minutesToAdd;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(wrapped / 60)).padStart(2, "0")}:${String(
+    wrapped % 60,
+  ).padStart(2, "0")}`;
+}
+
+function inferredStopOffset(route: { directions: string[] }, stop?: string) {
+  if (!stop) {
+    return 0;
+  }
+  const stops = uniqueBusStops(route);
+  const selectedIndex = stops.findIndex(
+    (entry) => normalizeBusStop(entry) === normalizeBusStop(stop),
+  );
+  return Math.max(0, selectedIndex) * 8;
+}
+
+function isFridayBreakTime(time: string) {
+  return time >= "12:40" && time < "14:00";
+}
+
+function busTimesForRoute(
+  route: { id?: string; code: string; documentId: string; directions?: string[] },
+  stop?: string,
+  now = new Date(),
+) {
+  const stopKey = stop ? normalizeBusStop(stop) : "";
+  const exactTimes = route.id ? busStopTimeOverrides[route.id]?.[stopKey] : undefined;
+  const baseTimes = (() => {
+    if (exactTimes) {
+      return exactTimes;
+    }
+    if (route.documentId === "bdr-tuesday-thursday-2026") {
+      return bdrBusTimes;
+    }
+    if (route.code.includes("Weekend")) {
+      return weekendBusTimes;
+    }
+    return regularBusTimes;
+  })();
+  const times = exactTimes
+    ? baseTimes
+    : baseTimes.map((time) =>
+        addMinutesToTime(time, inferredStopOffset({ directions: route.directions ?? [] }, stop)),
+      );
+  const day = currentDayName(now);
+  const dayScopedTimes =
+    route.id === "regular-20" && day !== "Tuesday"
+      ? times.filter((time) => !["14:30", "14:45", "15:00", "15:15"].includes(time))
+      : times;
+  if (
+    route.documentId === "regular-2025-2026" &&
+    day === "Friday"
+  ) {
+    return dayScopedTimes.filter((time) => !isFridayBreakTime(time));
+  }
+  return dayScopedTimes;
+}
+
+function busRunsOnDay(
+  route: { code: string; documentId: string; id?: string },
+  date: Date,
+) {
+  const day = currentDayName(date);
+  if (route.id === "regular-20") {
+    return day !== "Saturday" && day !== "Sunday";
+  }
+  if (route.documentId === "bdr-tuesday-thursday-2026") {
+    return day === "Tuesday" || day === "Thursday";
+  }
+  if (route.code.includes("Weekend")) {
+    return day === "Saturday" || day === "Sunday";
+  }
+  return day !== "Saturday" && day !== "Sunday";
+}
+
+function minutesUntilTime(time: string, now = new Date()) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const target = new Date(now);
+  target.setHours(hours, minutes, 0, 0);
+  return Math.round((target.getTime() - now.getTime()) / 60_000);
+}
+
+function busAvailability(
+  route: { id?: string; code: string; documentId: string; directions?: string[] },
+  stop?: string,
+  now = new Date(),
+) {
+  const stopLabel = stop ? `${stop}: ` : "";
+  if (!busRunsOnDay(route, now)) {
+    return {
+      label: `${stopLabel}No bus today`,
+      minutes: null as number | null,
+      isSoon: false,
+    };
+  }
+  const nextMinutes =
+    busTimesForRoute(route, stop, now)
+      .map((time) => minutesUntilTime(time, now))
+      .find((minutes) => minutes >= 0) ?? null;
+  if (nextMinutes === null) {
+    return { label: `${stopLabel}No more buses today`, minutes: null, isSoon: false };
+  }
+  if (nextMinutes === 0) {
+    return { label: `${stopLabel}Next bus now`, minutes: 0, isSoon: true };
+  }
+  if (nextMinutes < 60) {
+    return {
+      label: `${stopLabel}Next bus in ${nextMinutes} min`,
+      minutes: nextMinutes,
+      isSoon: true,
+    };
+  }
+  const hours = Math.floor(nextMinutes / 60);
+  const minutes = nextMinutes % 60;
+  return {
+    label: `${stopLabel}Next bus in ${hours}h${minutes ? ` ${minutes}m` : ""}`,
+    minutes: nextMinutes,
+    isSoon: false,
+  };
+}
+
 async function reverseGeocode(lat: number, lng: number) {
   try {
     const response = await fetch(
@@ -722,47 +1150,240 @@ function normalizeBudgetForType(
   value: string,
   type: ServiceRequest["type"],
 ) {
-  return /free/i.test(value.trim()) || value.trim() === "0"
-    ? budgetInputLabel(type)
-    : value;
+  return sanitizeBudgetInput(value);
 }
 
-function translatePreview(text: string, language: LanguageCode) {
+async function translateToEnglish(text: string) {
   if (!text.trim()) {
     return "";
   }
-  const label = languageNames[language] ?? "selected language";
-  return `Translated to ${label}: ${text}`;
+  const response = await fetch(
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(
+      text,
+    )}`,
+  );
+  if (!response.ok) {
+    throw new Error("Translation failed");
+  }
+  const data = (await response.json()) as Array<Array<Array<string>>>;
+  return data[0]?.map((part) => part[0]).join("") || text;
 }
 
 const developerSupportUrl =
   import.meta.env.VITE_BUY_ME_COFFEE_URL ||
   "https://www.buymeacoffee.com/blazinsan";
+const ownerEmail = String(
+  import.meta.env.VITE_OWNER_EMAIL || "hammau05@gmail.com",
+).toLowerCase();
+const ownerMatricNumber = String(import.meta.env.VITE_OWNER_MATRIC_NUMBER || "");
 
-function useLocalStorageState<T>(key: string, initialValue: T) {
-  const [supabaseLoaded, setSupabaseLoaded] = useState(!isSupabaseConfigured);
+function emptyProfile(overrides: Partial<Profile> = {}): Profile {
+  return { ...appUser, ...overrides };
+}
+
+function profileStorageKey(userId: string) {
+  return `everything-utm:user-profile:${userId}`;
+}
+
+function isDemoName(value?: string) {
+  return Boolean(value && demoNames.has(value.trim()));
+}
+
+function isDemoProfile(value: Partial<Profile>) {
+  return (
+    isDemoName(value.name) ||
+    Boolean(value.matricNumber && demoProfileMatricNumbers.has(value.matricNumber))
+  );
+}
+
+function hasAnyText(value: unknown, snippets: string[]) {
+  const haystack = JSON.stringify(value ?? "").toLowerCase();
+  return snippets.some((snippet) => haystack.includes(snippet.toLowerCase()));
+}
+
+function sameStoredState(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function itemId(value: unknown) {
+  return typeof value === "object" && value !== null && "id" in value
+    ? String((value as { id?: unknown }).id ?? "")
+    : "";
+}
+
+function sanitizeStoredState<T>(key: string, value: T): T {
+  if (key === "everything-utm:profile") {
+    return isDemoProfile(value as Partial<Profile>)
+      ? (emptyProfile() as T)
+      : value;
+  }
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  if (key === "everything-utm:marketplace") {
+    return value.filter(
+      (item: MarketplaceItem) =>
+        !demoDataIds.marketplace.has(item.id) &&
+        !isDemoName(item.seller) &&
+        !hasAnyText(item, [
+          "Calculus textbook bundle",
+          "Mini fridge for hostel",
+          "Arduino starter kit",
+          "Foldable bicycle",
+          "Meal prep nasi ayam set",
+        ]),
+    ) as T;
+  }
+  if (key === "everything-utm:messages") {
+    return value.filter(
+      (message: ChatMessage) =>
+        !demoDataIds.messages.has(message.id) &&
+        !isDemoName(message.author) &&
+        !hasAnyText(message, [
+          "Anyone going to DSI tonight",
+          "Found a black bottle near PSZ",
+          "SECI2143 group wants one more member",
+          "Arked Cengal ayam penyet queue",
+        ]),
+    ) as T;
+  }
+  if (key === "everything-utm:questions") {
+    return value.filter(
+      (question: Question) =>
+        !demoDataIds.questions.has(question.id) &&
+        !isDemoName(question.author) &&
+        !hasAnyText(question, [
+          "Best quiet study spots after 8 PM",
+          "How early should I book a driver to Senai Airport",
+        ]),
+    ) as T;
+  }
+  if (key === "everything-utm:papers") {
+    return value.filter(
+      (paper: PastPaper) =>
+        !demoDataIds.papers.has(paper.id) &&
+        !isDemoName(paper.uploader) &&
+        !hasAnyText(paper, [
+          "SECJ1013-final-2025",
+          "SECI2143-midterm-2024",
+          "Thermodynamics Past Year Questions",
+        ]),
+    ) as T;
+  }
+  if (key === "everything-utm:requests") {
+    return value.filter(
+      (request: ServiceRequest) =>
+        !demoDataIds.requests.has(request.id) &&
+        !isDemoName(request.requester) &&
+        !isDemoName(request.driver) &&
+        !hasAnyText(request, [
+          "Ride to Paradigm Mall",
+          "Collect printing from PSZ",
+          "Two passengers with one small bag",
+          "Paid printout at counter",
+        ]),
+    ) as T;
+  }
+  if (key === "everything-utm:notifications") {
+    return value.filter(
+      (notification: NotificationItem) =>
+        !demoDataIds.notifications.has(notification.id),
+    ) as T;
+  }
+  if (key === "everything-utm:profile-reviews") {
+    return value.filter(
+      (review: ProfileReview) =>
+        !demoDataIds.reviews.has(review.id) &&
+        !isDemoName(review.profileName) &&
+        !isDemoName(review.reviewer),
+    ) as T;
+  }
+  return value;
+}
+
+function mergeOnlineAndLocalState<T>(key: string, onlineValue: T, localValue: T) {
+  const online = sanitizeStoredState(key, onlineValue);
+  const local = sanitizeStoredState(key, localValue);
+  if (Array.isArray(online) && Array.isArray(local)) {
+    const merged = new Map<string, unknown>();
+    online.forEach((item) => {
+      const id = itemId(item);
+      if (id) {
+        merged.set(id, item);
+      }
+    });
+    local.forEach((item) => {
+      const id = itemId(item);
+      if (id && !merged.has(id)) {
+        merged.set(id, item);
+      }
+    });
+    return Array.from(merged.values()) as T;
+  }
+  return online ?? local;
+}
+
+function questionEngagementScore(question: Question) {
+  return (
+    question.votes +
+    question.answers.reduce(
+      (total, answer) =>
+        total + Math.max(answer.helpful, answer.helpfulBy?.length ?? 0),
+      0,
+    )
+  );
+}
+
+function useLocalStorageState<T>(
+  key: string,
+  initialValue: T,
+  options: { syncOnline?: boolean; reloadKey?: unknown; pollMs?: number } = {},
+) {
+  const syncOnline = options.syncOnline ?? false;
+  const [supabaseLoaded, setSupabaseLoaded] = useState(
+    !syncOnline || !isSupabaseConfigured,
+  );
   const [state, setState] = useState<T>(() => {
     try {
       const stored = window.localStorage.getItem(key);
-      return stored ? (JSON.parse(stored) as T) : initialValue;
+      return stored ? sanitizeStoredState(key, JSON.parse(stored) as T) : initialValue;
     } catch {
       return initialValue;
     }
   });
+  const stateRef = useRef(state);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    if (!syncOnline || !isSupabaseConfigured) {
+      setSupabaseLoaded(true);
       return;
     }
 
     let cancelled = false;
+    setSupabaseLoaded(false);
     loadSupabaseState<T>(key)
       .then((stored) => {
         if (cancelled) {
           return;
         }
+        const localState = sanitizeStoredState(key, stateRef.current);
         if (stored !== null) {
-          setState(stored);
+          const onlineState = sanitizeStoredState(key, stored);
+          const mergedState = mergeOnlineAndLocalState(
+            key,
+            onlineState,
+            localState,
+          );
+          setState(mergedState);
+          if (!sameStoredState(mergedState, onlineState)) {
+            saveSupabaseState(key, mergedState).catch(() => undefined);
+          }
+        } else {
+          saveSupabaseState(key, localState).catch(() => undefined);
         }
         setSupabaseLoaded(true);
       })
@@ -771,21 +1392,50 @@ function useLocalStorageState<T>(key: string, initialValue: T) {
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [key, options.reloadKey, syncOnline]);
 
   useEffect(() => {
+    if (!syncOnline || !isSupabaseConfigured || !supabaseLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshOnlineState = async () => {
+      const stored = await loadSupabaseState<T>(key).catch(() => null);
+      if (cancelled || stored === null) {
+        return;
+      }
+      setState((current) =>
+        mergeOnlineAndLocalState(key, stored, sanitizeStoredState(key, current)),
+      );
+    };
+
+    window.addEventListener("focus", refreshOnlineState);
+    const timer = window.setInterval(
+      refreshOnlineState,
+      options.pollMs ?? 30_000,
+    );
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refreshOnlineState);
+      window.clearInterval(timer);
+    };
+  }, [key, options.pollMs, options.reloadKey, supabaseLoaded, syncOnline]);
+
+  useEffect(() => {
+    const cleanState = sanitizeStoredState(key, state);
     try {
-      window.localStorage.setItem(key, JSON.stringify(state));
+      window.localStorage.setItem(key, JSON.stringify(cleanState));
     } catch {
       // Local storage can fail in private windows or if file uploads are very large.
     }
 
-    if (supabaseLoaded) {
-      saveSupabaseState(key, state).catch(() => {
+    if (syncOnline && supabaseLoaded) {
+      saveSupabaseState(key, cleanState).catch(() => {
         // Keep the app usable offline or before Supabase policies are configured.
       });
     }
-  }, [key, state, supabaseLoaded]);
+  }, [key, state, supabaseLoaded, syncOnline]);
 
   return [state, setState] as const;
 }
@@ -872,6 +1522,25 @@ export default function App() {
   const [pageDirection, setPageDirection] = useState<"forward" | "back">(
     "forward",
   );
+  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [guestMode, setGuestMode] = useLocalStorageState(
+    "everything-utm:guest-mode",
+    false,
+  );
+  const [localIdentity] = useLocalStorageState(
+    "everything-utm:local-identity",
+    uid("local"),
+  );
+  const onlineReloadKey = authSession?.user.id ?? "public";
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authForm, setAuthForm] = useState({
+    email: "",
+    password: "",
+    name: "",
+    sex: "Prefer not to say",
+  });
+  const [resetEmailSentAt, setResetEmailSentAt] = useState(0);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [profile, setProfile] = useLocalStorageState<Profile>(
@@ -887,10 +1556,14 @@ export default function App() {
   >("everything-utm:notifications", seedNotifications);
   const [profileReviews, setProfileReviews] = useLocalStorageState<
     ProfileReview[]
-  >("everything-utm:profile-reviews", seedProfileReviews);
+  >("everything-utm:profile-reviews", [], {
+    reloadKey: onlineReloadKey,
+    syncOnline: true,
+  });
   const [marketplace, setMarketplace] = useLocalStorageState<MarketplaceItem[]>(
     "everything-utm:marketplace",
-    seedMarketplace,
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: true },
   );
   const [favourites, setFavourites] = useLocalStorageState<string[]>(
     "everything-utm:favourites",
@@ -898,22 +1571,28 @@ export default function App() {
   );
   const [messages, setMessages] = useLocalStorageState<ChatMessage[]>(
     "everything-utm:messages",
-    seedMessages,
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: true },
   );
   const [questions, setQuestions] = useLocalStorageState<Question[]>(
     "everything-utm:questions",
-    seedQuestions,
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: true },
   );
   const [papers, setPapers] = useLocalStorageState<PastPaper[]>(
     "everything-utm:papers",
-    seedPapers,
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: true },
   );
   const [requests, setRequests] = useLocalStorageState<ServiceRequest[]>(
     "everything-utm:requests",
-    seedRequests,
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: true },
   );
 
   const [marketCategory, setMarketCategory] = useState("All");
+  const [marketSort, setMarketSort] =
+    useState<(typeof marketplaceSortOptions)[number]>("Date posted");
   const [listingDraft, setListingDraft] = useState(initialListing);
   const [listingImages, setListingImages] = useState<string[]>([]);
   const [editingListingId, setEditingListingId] = useState<string | null>(null);
@@ -932,6 +1611,8 @@ export default function App() {
   const [messageVoiceDuration, setMessageVoiceDuration] = useState(0);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [questionDraft, setQuestionDraft] = useState(initialQuestion);
+  const [questionSort, setQuestionSort] =
+    useState<(typeof questionSortOptions)[number]>("Date posted");
   const [questionImage, setQuestionImage] = useState("");
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
   const [paperDraft, setPaperDraft] = useState(initialPaper);
@@ -962,6 +1643,9 @@ export default function App() {
   const [selectedBusRouteId, setSelectedBusRouteId] = useState(
     busScheduleRoutes[0].id,
   );
+  const [selectedBusStop, setSelectedBusStop] = useState(
+    uniqueBusStops(busScheduleRoutes[0])[0] ?? "",
+  );
   const [busSearch, setBusSearch] = useState("");
   const [profileDraft, setProfileDraft] = useState<Profile>({
     ...appUser,
@@ -970,6 +1654,8 @@ export default function App() {
   const [selectedProfileName, setSelectedProfileName] = useState(profile.name);
   const [reviewDraft, setReviewDraft] = useState({ rating: "5", body: "" });
   const [deleteAccountArmed, setDeleteAccountArmed] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [bugReportDraft, setBugReportDraft] = useState("");
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
   const longPressTimers = useRef<Record<string, number>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -977,33 +1663,47 @@ export default function App() {
   const recordingStartedAtRef = useRef(0);
 
   const profileData: Profile = { ...appUser, ...profile };
+  const currentUserId = authSession?.user.id ?? localIdentity;
+  const currentDisplayName =
+    profileData.name.trim() || (isSupabaseConfigured && authSession ? "New UTM user" : "Guest");
   const appSettings: AppSettings = {
     ...defaultSettings,
     ...settings,
   };
+  const isSignedIn = Boolean(authSession);
+  const canUseApp = guestMode || isSignedIn || !isSupabaseConfigured;
   const t = (key: string) =>
     uiText[appSettings.language]?.[key] ?? uiText.en[key] ?? key;
   const search = normalize(query);
   const unreadCount = notifications.filter((item) => !item.read).length;
-  const isOwner = profileData.matricNumber === appUser.matricNumber;
+  const isOwner = Boolean(
+    (ownerEmail && authSession?.user.email?.toLowerCase() === ownerEmail) ||
+      (ownerMatricNumber && profileData.matricNumber === ownerMatricNumber),
+  );
   const activeModuleIndex = navItems.findIndex((item) => item.key === activeModule);
   const profileDirectory = useMemo(() => {
     const directory = new Map<string, Profile>();
-    seedProfiles.forEach((person) => directory.set(person.name, person));
-    directory.set(profileData.name, profileData);
-    directory.set(appUser.name, { ...appUser, ...profileData });
+    if (profileData.name.trim()) {
+      directory.set(profileData.name, profileData);
+    }
     return directory;
   }, [profileData]);
   const getProfile = (name: string) =>
     profileDirectory.get(name) ?? {
       ...appUser,
       name,
-      role: "UTM community member",
-      contactNumber: "Not shared",
-      matricNumber: "Not shared",
       profilePicture: "",
-      wallet: 0,
     };
+  const isCurrentUserEntity = (entityId?: string, entityName?: string) =>
+    Boolean(
+      (entityId &&
+        (entityId === currentUserId ||
+          (!!profileData.matricNumber && entityId === profileData.matricNumber))) ||
+        (!entityId &&
+          !!entityName &&
+          !!profileData.name.trim() &&
+          entityName === profileData.name),
+    );
   const selectedProfile = getProfile(selectedProfileName || profileData.name);
   const selectedProfileReviews = profileReviews.filter(
     (review) => review.profileName === selectedProfile.name,
@@ -1015,8 +1715,11 @@ export default function App() {
     (question) => question.author === selectedProfile.name,
   );
   const viewingOwnProfile =
-    selectedProfile.name === profileData.name ||
-    selectedProfile.matricNumber === profileData.matricNumber;
+    !selectedProfileName ||
+    (!!selectedProfile.name.trim() &&
+      selectedProfile.name === profileData.name) ||
+    (!!selectedProfile.matricNumber &&
+      selectedProfile.matricNumber === profileData.matricNumber);
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
     setNoticeTone(tone);
@@ -1031,8 +1734,141 @@ export default function App() {
   }, [appSettings.language, appSettings.theme]);
 
   useEffect(() => {
+    if (!supabase) {
+      setAuthReady(true);
+      return;
+    }
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) {
+        return;
+      }
+      setAuthSession(data.session);
+      setAuthReady(true);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+      if (session) {
+        setGuestMode(false);
+      }
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [setGuestMode]);
+
+  useEffect(() => {
+    if (!supabase || !authSession?.user) {
+      return;
+    }
+    const supabaseClient = supabase;
+    let cancelled = false;
+    const loadProfile = async () => {
+      let storedProfile: Partial<Profile> | null = null;
+      const { data, error } = await supabaseClient
+        .from("user_profiles")
+        .select("profile,name,sex,email")
+        .eq("id", authSession.user.id)
+        .maybeSingle<{
+          profile: Partial<Profile> | null;
+          name: string | null;
+          sex: string | null;
+          email: string | null;
+        }>();
+      if (!error) {
+        storedProfile = data?.profile ?? null;
+      }
+      if (!storedProfile) {
+        storedProfile = await loadSupabaseState<Partial<Profile>>(
+          profileStorageKey(authSession.user.id),
+        ).catch(() => null);
+      }
+      if (cancelled) {
+        return;
+      }
+      const nextProfile = isDemoProfile(storedProfile ?? {})
+        ? emptyProfile()
+        : {
+            ...emptyProfile(),
+            ...(storedProfile ?? {}),
+          };
+      setProfile(nextProfile);
+      setProfileDraft(nextProfile);
+    };
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession, setProfile]);
+
+  useEffect(() => {
     setProfileDraft({ ...appUser, ...profile });
   }, [profile]);
+
+  useEffect(() => {
+    setProfile((current) =>
+      demoProfileMatricNumbers.has(current.matricNumber) ||
+      demoNames.has(current.name)
+        ? emptyProfile()
+        : current,
+    );
+    setMarketplace((current) =>
+      current.filter(
+        (item) =>
+          !demoDataIds.marketplace.has(item.id) && !demoNames.has(item.seller),
+      ),
+    );
+    setMessages((current) =>
+      current.filter(
+        (message) =>
+          !demoDataIds.messages.has(message.id) && !demoNames.has(message.author),
+      ),
+    );
+    setQuestions((current) =>
+      current.filter(
+        (question) =>
+          !demoDataIds.questions.has(question.id) &&
+          !demoNames.has(question.author),
+      ),
+    );
+    setPapers((current) =>
+      current.filter(
+        (paper) =>
+          !demoDataIds.papers.has(paper.id) && !demoNames.has(paper.uploader),
+      ),
+    );
+    setRequests((current) =>
+      current.filter(
+        (request) =>
+          !demoDataIds.requests.has(request.id) &&
+          !demoNames.has(request.requester) &&
+          !demoNames.has(request.driver ?? ""),
+      ),
+    );
+    setNotifications((current) =>
+      current.filter((notification) => !demoDataIds.notifications.has(notification.id)),
+    );
+    setProfileReviews((current) =>
+      current.filter(
+        (review) =>
+          !demoDataIds.reviews.has(review.id) &&
+          !demoNames.has(review.profileName) &&
+          !demoNames.has(review.reviewer),
+      ),
+    );
+  }, [
+    setMarketplace,
+    setMessages,
+    setNotifications,
+    setPapers,
+    setProfile,
+    setProfileReviews,
+    setQuestions,
+    setRequests,
+  ]);
 
   useEffect(() => {
     const listingId = new URLSearchParams(window.location.search).get("listing");
@@ -1086,7 +1922,7 @@ export default function App() {
   );
 
   const visibleMarketplace = useMemo(() => {
-    return marketplace.filter((item) => {
+    const filtered = marketplace.filter((item) => {
       const inCategory =
         marketCategory === "All" ||
         (marketCategory === "Free" && item.price <= 0) ||
@@ -1100,7 +1936,16 @@ export default function App() {
           .includes(search);
       return inCategory && inSearch;
     });
-  }, [favourites, marketCategory, marketplace, search]);
+    return [...filtered].sort((a, b) => {
+      if (marketSort === "Price low to high") {
+        return a.price - b.price;
+      }
+      if (marketSort === "Price high to low") {
+        return b.price - a.price;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [favourites, marketCategory, marketSort, marketplace, search]);
 
   const visibleLocations = useMemo(() => {
     return campusLocations.filter((location) => {
@@ -1155,7 +2000,7 @@ export default function App() {
   );
 
   const visibleQuestions = useMemo(() => {
-    return questions.filter((question) => {
+    const filtered = questions.filter((question) => {
       return (
         !search ||
         [
@@ -1170,7 +2015,27 @@ export default function App() {
           .includes(search)
       );
     });
-  }, [questions, search]);
+    return [...filtered].sort((a, b) => {
+      if (questionSort === "Most likes/upvotes") {
+        return (
+          questionEngagementScore(b) - questionEngagementScore(a) ||
+          new Date(b.createdAt ?? "1970-01-01").getTime() -
+            new Date(a.createdAt ?? "1970-01-01").getTime()
+        );
+      }
+      if (questionSort === "Least likes/upvotes") {
+        return (
+          questionEngagementScore(a) - questionEngagementScore(b) ||
+          new Date(b.createdAt ?? "1970-01-01").getTime() -
+            new Date(a.createdAt ?? "1970-01-01").getTime()
+        );
+      }
+      return (
+        new Date(b.createdAt ?? "1970-01-01").getTime() -
+        new Date(a.createdAt ?? "1970-01-01").getTime()
+      );
+    });
+  }, [questionSort, questions, search]);
 
   const visiblePapers = useMemo(() => {
     return papers.filter((paper) => {
@@ -1260,6 +2125,26 @@ export default function App() {
     busScheduleDocuments.find(
       (document) => document.id === selectedBusRoute.documentId,
     ) ?? busScheduleDocuments[0];
+  const selectedBusStops = useMemo(
+    () => uniqueBusStops(selectedBusRoute),
+    [selectedBusRoute],
+  );
+  const activeBusStop = selectedBusStops.includes(selectedBusStop)
+    ? selectedBusStop
+    : selectedBusStops[0] ?? "";
+  const selectedBusAvailability = busAvailability(
+    selectedBusRoute,
+    activeBusStop,
+  );
+
+  useEffect(() => {
+    if (!selectedBusStops.length) {
+      return;
+    }
+    if (!selectedBusStops.includes(selectedBusStop)) {
+      setSelectedBusStop(selectedBusStops[0]);
+    }
+  }, [selectedBusRoute.id, selectedBusStop, selectedBusStops]);
 
   const searchResults = useMemo<SearchResult[]>(() => {
     if (!search) {
@@ -1402,6 +2287,36 @@ export default function App() {
       }
     });
 
+    busScheduleRoutes.forEach((route) => {
+      const availability = busAvailability(route, uniqueBusStops(route)[0]);
+      const haystack = [
+        "bus",
+        "shuttle",
+        "available now",
+        "next bus",
+        route.code,
+        route.route,
+        route.service,
+        availability.label,
+        ...route.directions,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (haystack.includes(search)) {
+        results.push({
+          id: route.id,
+          module: "bus",
+          title: `${route.code} - ${route.route}`,
+          detail: `Bus schedule · ${availability.label}`,
+          action: () => {
+            setSelectedBusDocumentId(route.documentId);
+            setSelectedBusRouteId(route.id);
+            navigateToModule("bus");
+          },
+        });
+      }
+    });
+
     requests.forEach((request) => {
       const haystack = [
         request.type,
@@ -1460,6 +2375,198 @@ export default function App() {
     setActiveModuleState(module);
   }
 
+  function switchAuthMode(mode: "signin" | "signup") {
+    setAuthMode(mode);
+    setAuthForm({
+      email: "",
+      password: "",
+      name: "",
+      sex: "Prefer not to say",
+    });
+  }
+
+  async function saveProfileForUserId(
+    userId: string | undefined,
+    nextProfile: Profile,
+    email?: string,
+  ) {
+    if (!supabase || !userId) {
+      return;
+    }
+    const { error } = await supabase.from("user_profiles").upsert({
+      id: userId,
+      email,
+      name: nextProfile.name,
+      sex: nextProfile.sex,
+      profile: nextProfile,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      await saveSupabaseState(profileStorageKey(userId), nextProfile);
+    }
+  }
+
+  async function syncProfileToSupabase(nextProfile: Profile, email?: string) {
+    await saveProfileForUserId(
+      authSession?.user.id,
+      nextProfile,
+      email ?? authSession?.user.email,
+    );
+  }
+
+  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase) {
+      setGuestMode(false);
+      showNotice("Supabase is not configured yet", "error");
+      return;
+    }
+    if (!authForm.email.trim() || !authForm.password.trim()) {
+      showNotice("Email and password are required", "error");
+      return;
+    }
+
+    if (authMode === "signup") {
+      if (!authForm.name.trim()) {
+        showNotice("Name is required to create an account", "error");
+        return;
+      }
+      const { data: existingProfile } = await supabase
+        .from("user_profiles")
+        .select("id")
+        .eq("email", authForm.email.trim().toLowerCase())
+        .maybeSingle();
+      if (existingProfile) {
+        showNotice("This email already has an EverythingUTM account", "error");
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email: authForm.email.trim(),
+        password: authForm.password,
+        options: {
+          data: {
+            name: authForm.name.trim(),
+            sex: authForm.sex,
+          },
+          emailRedirectTo: window.location.origin,
+        },
+      });
+      if (error) {
+        showNotice(
+          error.message.toLowerCase().includes("rate limit")
+            ? "Email sending is busy. Try Google sign-in or wait before requesting another email."
+            : error.message,
+          "error",
+        );
+        return;
+      }
+      if (
+        data.user &&
+        Array.isArray(data.user.identities) &&
+        data.user.identities.length === 0
+      ) {
+        showNotice("This email already has an EverythingUTM account", "error");
+        return;
+      }
+      const nextProfile = emptyProfile();
+      setProfile(nextProfile);
+      setProfileDraft(nextProfile);
+      if (data.session) {
+        setAuthSession(data.session);
+      } else {
+        setGuestMode(true);
+      }
+      await saveProfileForUserId(
+        data.user?.id,
+        nextProfile,
+        authForm.email.trim().toLowerCase(),
+      );
+      showNotice("Account created. Finish your profile setup.");
+      openOwnProfile();
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: authForm.email.trim(),
+      password: authForm.password,
+    });
+    if (error) {
+      showNotice(error.message, "error");
+      return;
+    }
+    setAuthSession(data.session);
+    setGuestMode(false);
+    showNotice("Signed in");
+    navigateToModule("home");
+  }
+
+  async function signInWithGoogle() {
+    if (!supabase) {
+      showNotice("Supabase is not configured yet", "error");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+    if (error) {
+      showNotice(error.message, "error");
+    }
+  }
+
+  async function resetPassword() {
+    if (!supabase) {
+      showNotice("Supabase is not configured yet", "error");
+      return;
+    }
+    if (!authForm.email.trim()) {
+      showNotice("Enter your email first", "error");
+      return;
+    }
+    if (Date.now() - resetEmailSentAt < 60_000) {
+      showNotice("Please wait before requesting another reset email", "error");
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(authForm.email.trim(), {
+      redirectTo: window.location.origin,
+    });
+    if (error) {
+      showNotice(
+        error.message.toLowerCase().includes("rate limit")
+          ? "Password email is rate limited. Try again later or use Google sign-in."
+          : error.message,
+        "error",
+      );
+      return;
+    }
+    setResetEmailSentAt(Date.now());
+    showNotice("Password reset email sent");
+  }
+
+  async function signOut() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setAuthSession(null);
+    setGuestMode(true);
+    setProfile(emptyProfile());
+    setProfileDraft(emptyProfile());
+    setSelectedProfileName("");
+    showNotice("Signed out");
+    navigateToModule("home");
+  }
+
+  function browseAsGuest() {
+    setGuestMode(true);
+    setProfile(emptyProfile());
+    setProfileDraft(emptyProfile());
+    setSelectedProfileName("");
+    navigateToModule("home");
+  }
+
   function openNotification(item: NotificationItem) {
     setNotifications((current) =>
       current.map((notification) =>
@@ -1505,18 +2612,33 @@ export default function App() {
     setRequestActionId(null);
   }
 
-  function toggleTranslation(key: string, text: string) {
-    setTranslatedItems((current) => {
-      if (current[key]) {
+  async function toggleTranslation(key: string, text: string) {
+    if (translatedItems[key]) {
+      setTranslatedItems((current) => {
         const next = { ...current };
         delete next[key];
         return next;
-      }
-      return {
+      });
+      return;
+    }
+    setTranslatedItems((current) => ({
+      ...current,
+      [key]: "Translating to English...",
+    }));
+    try {
+      const translated = await translateToEnglish(text);
+      setTranslatedItems((current) => ({
         ...current,
-        [key]: translatePreview(text, appSettings.language),
-      };
-    });
+        [key]: `English: ${translated}`,
+      }));
+    } catch {
+      setTranslatedItems((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      showNotice("Translation service is unavailable right now", "error");
+    }
   }
 
   function toggleFavourite(itemId: string) {
@@ -1555,7 +2677,9 @@ export default function App() {
 
   async function toggleVoiceRecording() {
     if (isRecordingVoice) {
+      mediaRecorderRef.current?.requestData();
       mediaRecorderRef.current?.stop();
+      setIsRecordingVoice(false);
       return;
     }
 
@@ -1579,6 +2703,11 @@ export default function App() {
           type: recorder.mimeType || "audio/webm",
         });
         stream.getTracks().forEach((track) => track.stop());
+        if (!blob.size) {
+          showNotice("Voice recording was empty. Try recording again.", "error");
+          setIsRecordingVoice(false);
+          return;
+        }
         const reader = new FileReader();
         reader.onload = () => {
           setMessageVoice(String(reader.result));
@@ -1627,7 +2756,9 @@ export default function App() {
     const message: ChatMessage = {
       id: uid("msg"),
       channel,
-      author: profileData.name,
+      author: currentDisplayName,
+      authorId: currentUserId,
+      authorAvatar: profileData.profilePicture,
       content,
       time: new Date().toISOString(),
     };
@@ -1655,8 +2786,8 @@ export default function App() {
       title: listingDraft.title.trim(),
       category: listingDraft.category,
       price: parsePriceInput(listingDraft.price),
-      seller: profileData.name,
-      sellerId: profileData.matricNumber,
+      seller: currentDisplayName,
+      sellerId: currentUserId,
       sellerAvatar: profileData.profilePicture,
       location: listingDraft.location.trim() || "UTM Johor Bahru",
       fulfillment: listingDraft.fulfillment,
@@ -1677,6 +2808,10 @@ export default function App() {
   }
 
   function beginEditListing(item: MarketplaceItem) {
+    if (!isCurrentUserEntity(item.sellerId, item.seller)) {
+      showNotice("Only the listing author can edit this post", "error");
+      return;
+    }
     setEditingListingId(item.id);
     setListingEditDraft({
       title: item.title,
@@ -1694,6 +2829,11 @@ export default function App() {
   }
 
   function saveListingEdit(itemId: string) {
+    const listing = marketplace.find((item) => item.id === itemId);
+    if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
+      showNotice("Only the listing author can save changes", "error");
+      return;
+    }
     if (!listingEditDraft.title.trim() || !listingEditDraft.description.trim()) {
       showNotice("Listing needs a title and description", "error");
       return;
@@ -1723,6 +2863,11 @@ export default function App() {
   }
 
   function deleteListing(itemId: string) {
+    const listing = marketplace.find((item) => item.id === itemId);
+    if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
+      showNotice("Only the listing author can delete this post", "error");
+      return;
+    }
     setMarketplace((current) => current.filter((item) => item.id !== itemId));
     setFavourites((current) => current.filter((id) => id !== itemId));
     setSelectedListingId(null);
@@ -1773,19 +2918,19 @@ export default function App() {
   function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!messageDraft.trim() && !messageImage && !messageVoice) {
-      showNotice("Message needs text or a picture", "error");
+      showNotice("Message needs text, a picture, or a voice recording", "error");
       return;
     }
     const message: ChatMessage = {
       id: uid("msg"),
       channel: activeChannel,
-      author: profileData.name,
-      authorId: profileData.matricNumber,
+      author: currentDisplayName,
+      authorId: currentUserId,
       authorAvatar: profileData.profilePicture,
       content: messageDraft.trim(),
-      image: messageImage,
-      voiceUrl: messageVoice,
-      voiceDuration: messageVoiceDuration,
+      image: messageImage || undefined,
+      voiceUrl: messageVoice || undefined,
+      voiceDuration: messageVoice ? messageVoiceDuration : undefined,
       time: new Date().toISOString(),
     };
     setMessages((current) => [...current, message]);
@@ -1800,12 +2945,12 @@ export default function App() {
       current.map((message) => {
         if (message.id !== messageId) return message;
         const likedBy = message.likedBy ?? [];
-        const liked = likedBy.includes(profileData.matricNumber);
+        const liked = likedBy.includes(currentUserId);
         return {
           ...message,
           likedBy: liked
-            ? likedBy.filter((id) => id !== profileData.matricNumber)
-            : [...likedBy, profileData.matricNumber],
+            ? likedBy.filter((id) => id !== currentUserId)
+            : [...likedBy, currentUserId],
         };
       }),
     );
@@ -1815,16 +2960,22 @@ export default function App() {
     setMessages((current) =>
       current.map((message) => {
         if (message.id !== messageId) return message;
-        const reactions = message.reactions ?? {};
+        const reactions = Object.fromEntries(
+          Object.entries(message.reactions ?? {}).map(([key, users]) => [
+            key,
+            users.filter((id) => id !== currentUserId),
+          ]),
+        );
         const users = reactions[reaction] ?? [];
-        const reacted = users.includes(profileData.matricNumber);
+        const hadReaction = (message.reactions?.[reaction] ?? []).includes(
+          currentUserId,
+        );
         return {
           ...message,
+          likedBy: (message.likedBy ?? []).filter((id) => id !== currentUserId),
           reactions: {
             ...reactions,
-            [reaction]: reacted
-              ? users.filter((id) => id !== profileData.matricNumber)
-              : [...users, profileData.matricNumber],
+            [reaction]: hadReaction ? users : [...users, currentUserId],
           },
         };
       }),
@@ -1833,12 +2984,21 @@ export default function App() {
   }
 
   function beginEditMessage(message: ChatMessage) {
+    if (!isCurrentUserEntity(message.authorId, message.author)) {
+      showNotice("Only the message author can edit this message", "error");
+      return;
+    }
     setEditingMessageId(message.id);
     setMessageEditDraft(message.content);
     setMessageActionId(null);
   }
 
   function saveMessageEdit(messageId: string) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message || !isCurrentUserEntity(message.authorId, message.author)) {
+      showNotice("Only the message author can save changes", "error");
+      return;
+    }
     if (!messageEditDraft.trim()) return;
     setMessages((current) =>
       current.map((message) =>
@@ -1856,6 +3016,11 @@ export default function App() {
   }
 
   function deleteMessage(messageId: string) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message || !isCurrentUserEntity(message.authorId, message.author)) {
+      showNotice("Only the message author can delete this message", "error");
+      return;
+    }
     setMessages((current) => current.filter((message) => message.id !== messageId));
     setMessageActionId(null);
   }
@@ -1871,13 +3036,14 @@ export default function App() {
       id: uid("q"),
       title: questionDraft.title.trim(),
       body: questionDraft.body.trim(),
-      author: profileData.name,
-      authorId: profileData.matricNumber,
+      author: currentDisplayName,
+      authorId: currentUserId,
       authorAvatar: profileData.profilePicture,
       image: questionImage,
       tags: compactTags(questionDraft.tags),
       votes: 0,
       resolved: false,
+      createdAt: new Date().toISOString(),
       answers: [],
     };
 
@@ -1908,8 +3074,8 @@ export default function App() {
                 ...question.answers,
                 {
                   id: uid("a"),
-                  author: profileData.name,
-                  authorId: profileData.matricNumber,
+                  author: currentDisplayName,
+                  authorId: currentUserId,
                   authorAvatar: profileData.profilePicture,
                   body,
                   helpful: 0,
@@ -1935,6 +3101,11 @@ export default function App() {
   }
 
   function markQuestionResolved(questionId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
+      showNotice("Only the question author can change resolved status", "error");
+      return;
+    }
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
@@ -1945,6 +3116,10 @@ export default function App() {
   }
 
   function beginEditQuestion(question: Question) {
+    if (!isCurrentUserEntity(question.authorId, question.author)) {
+      showNotice("Only the question author can edit this question", "error");
+      return;
+    }
     setEditingQuestionId(question.id);
     setQuestionEditDraft({
       title: question.title,
@@ -1955,6 +3130,11 @@ export default function App() {
   }
 
   function saveQuestionEdit(questionId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
+      showNotice("Only the question author can save changes", "error");
+      return;
+    }
     if (!questionEditDraft.title.trim() || !questionEditDraft.body.trim()) {
       showNotice("Question needs a title and details", "error");
       return;
@@ -1977,6 +3157,11 @@ export default function App() {
   }
 
   function deleteQuestion(questionId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
+      showNotice("Only the question author can delete this question", "error");
+      return;
+    }
     setQuestions((current) =>
       current.filter((question) => question.id !== questionId),
     );
@@ -1993,7 +3178,7 @@ export default function App() {
                 answer.id === answerId
                   ? (() => {
                       const helpedBy = answer.helpfulBy ?? [];
-                      const alreadyHelpful = helpedBy.includes(profileData.matricNumber);
+                      const alreadyHelpful = helpedBy.includes(currentUserId);
                       return {
                         ...answer,
                         helpful: Math.max(
@@ -2001,8 +3186,8 @@ export default function App() {
                           answer.helpful + (alreadyHelpful ? -1 : 1),
                         ),
                         helpfulBy: alreadyHelpful
-                          ? helpedBy.filter((id) => id !== profileData.matricNumber)
-                          : [...helpedBy, profileData.matricNumber],
+                          ? helpedBy.filter((id) => id !== currentUserId)
+                          : [...helpedBy, currentUserId],
                       };
                     })()
                   : answer,
@@ -2029,7 +3214,7 @@ export default function App() {
         year: paperDraft.year,
         semester: paperDraft.semester,
         type: paperDraft.type,
-        uploader: profileData.name,
+        uploader: currentDisplayName,
         fileName: paperFile?.name ?? `${paperDraft.code.trim().toUpperCase()}.txt`,
         fileSize: paperFile
           ? `${(paperFile.size / 1024 / 1024).toFixed(2)} MB`
@@ -2197,7 +3382,7 @@ export default function App() {
       dropoffMapUrl: googleMapsUrlFor(location.lat, location.lng),
       scheduleDay: currentDayName(),
       scheduleTime: currentTimeValue(),
-      budget: budgetInputLabel("Ride"),
+      budget: "",
       notes: `I want to get to ${location.name}.`,
     }));
     setPickupMapLocationId("");
@@ -2212,13 +3397,25 @@ export default function App() {
       showNotice("Request needs a title", "error");
       return;
     }
+    const allowedDays = availableTransportDays();
+    if (!allowedDays.includes(requestDraft.scheduleDay)) {
+      showNotice("Choose today or an upcoming day", "error");
+      return;
+    }
+    if (
+      requestDraft.scheduleDay === currentDayName() &&
+      compareTimeValues(requestDraft.scheduleTime, currentTimeValue()) < 0
+    ) {
+      showNotice("Choose a future time for today", "error");
+      return;
+    }
 
     const request: ServiceRequest = {
       id: uid("req"),
       type: requestDraft.type,
       title: requestDraft.title.trim(),
-      requester: profileData.name,
-      requesterId: profileData.matricNumber,
+      requester: currentDisplayName,
+      requesterId: currentUserId,
       requesterAvatar: profileData.profilePicture,
       pickup: requestDraft.pickup.trim() || "UTM Johor Bahru",
       pickupLat: requestDraft.pickupLat ?? undefined,
@@ -2253,8 +3450,8 @@ export default function App() {
           ? {
               ...request,
               status: "Matched",
-              driver: profileData.name,
-              driverId: profileData.matricNumber,
+              driver: currentDisplayName,
+              driverId: currentUserId,
               driverAvatar: profileData.profilePicture,
             }
           : request,
@@ -2273,7 +3470,9 @@ export default function App() {
     const message: ChatMessage = {
       id: uid("msg"),
       channel,
-      author: profileData.name,
+      author: currentDisplayName,
+      authorId: currentUserId,
+      authorAvatar: profileData.profilePicture,
       content,
       time: new Date().toISOString(),
     };
@@ -2314,15 +3513,14 @@ export default function App() {
   }
 
   function saveProfile() {
-    const previousName = profileData.name;
     const nextProfile = { ...profileDraft };
     setMarketplace((current) =>
       current.map((item) =>
-        item.seller === previousName || item.sellerId === profileData.matricNumber
+        isCurrentUserEntity(item.sellerId, item.seller)
           ? {
               ...item,
               seller: nextProfile.name,
-              sellerId: nextProfile.matricNumber,
+              sellerId: currentUserId,
               sellerAvatar: nextProfile.profilePicture,
             }
           : item,
@@ -2330,11 +3528,11 @@ export default function App() {
     );
     setMessages((current) =>
       current.map((message) =>
-        message.author === previousName || message.authorId === profileData.matricNumber
+        isCurrentUserEntity(message.authorId, message.author)
           ? {
               ...message,
               author: nextProfile.name,
-              authorId: nextProfile.matricNumber,
+              authorId: currentUserId,
               authorAvatar: nextProfile.profilePicture,
             }
           : message,
@@ -2344,23 +3542,23 @@ export default function App() {
       current.map((question) => ({
         ...question,
         author:
-          question.author === previousName || question.authorId === profileData.matricNumber
+          isCurrentUserEntity(question.authorId, question.author)
             ? nextProfile.name
             : question.author,
         authorId:
-          question.author === previousName || question.authorId === profileData.matricNumber
-            ? nextProfile.matricNumber
+          isCurrentUserEntity(question.authorId, question.author)
+            ? currentUserId
             : question.authorId,
         authorAvatar:
-          question.author === previousName || question.authorId === profileData.matricNumber
+          isCurrentUserEntity(question.authorId, question.author)
             ? nextProfile.profilePicture
             : question.authorAvatar,
         answers: question.answers.map((answer) =>
-          answer.author === previousName || answer.authorId === profileData.matricNumber
+          isCurrentUserEntity(answer.authorId, answer.author)
             ? {
                 ...answer,
                 author: nextProfile.name,
-                authorId: nextProfile.matricNumber,
+                authorId: currentUserId,
                 authorAvatar: nextProfile.profilePicture,
               }
             : answer,
@@ -2371,32 +3569,33 @@ export default function App() {
       current.map((request) => ({
         ...request,
         requester:
-          request.requester === previousName || request.requesterId === profileData.matricNumber
+          isCurrentUserEntity(request.requesterId, request.requester)
             ? nextProfile.name
             : request.requester,
         requesterId:
-          request.requester === previousName || request.requesterId === profileData.matricNumber
-            ? nextProfile.matricNumber
+          isCurrentUserEntity(request.requesterId, request.requester)
+            ? currentUserId
             : request.requesterId,
         requesterAvatar:
-          request.requester === previousName || request.requesterId === profileData.matricNumber
+          isCurrentUserEntity(request.requesterId, request.requester)
             ? nextProfile.profilePicture
             : request.requesterAvatar,
         driver:
-          request.driver === previousName || request.driverId === profileData.matricNumber
+          isCurrentUserEntity(request.driverId, request.driver)
             ? nextProfile.name
             : request.driver,
         driverId:
-          request.driver === previousName || request.driverId === profileData.matricNumber
-            ? nextProfile.matricNumber
+          isCurrentUserEntity(request.driverId, request.driver)
+            ? currentUserId
             : request.driverId,
         driverAvatar:
-          request.driver === previousName || request.driverId === profileData.matricNumber
+          isCurrentUserEntity(request.driverId, request.driver)
             ? nextProfile.profilePicture
             : request.driverAvatar,
       })),
     );
     setProfile(nextProfile);
+    syncProfileToSupabase(nextProfile).catch(() => undefined);
     setSelectedProfileName(nextProfile.name);
     showNotice("Profile saved");
     addNotification("Profile saved", "Your student profile was updated.", "profile");
@@ -2411,7 +3610,7 @@ export default function App() {
     const review: ProfileReview = {
       id: uid("review"),
       profileName: selectedProfile.name,
-      reviewer: profileData.name,
+      reviewer: currentDisplayName,
       reviewerAvatar: profileData.profilePicture,
       rating: Number(reviewDraft.rating) || 5,
       body: reviewDraft.body.trim(),
@@ -2422,15 +3621,239 @@ export default function App() {
     showNotice("Review posted");
   }
 
-  function deleteLocalAccount() {
+  async function deleteLocalAccount() {
     if (!deleteAccountArmed) {
       setDeleteAccountArmed(true);
       showNotice("Press delete again to confirm", "error");
       return;
     }
+    if (deleteConfirmText !== "DELETE") {
+      showNotice('Type DELETE to confirm account deletion', "error");
+      return;
+    }
+    if (supabase && authSession) {
+      await supabase.functions.invoke("delete-account").catch(() => undefined);
+      await supabase.auth.signOut().catch(() => undefined);
+    }
     window.localStorage.clear();
     setDeleteAccountArmed(false);
-    window.location.reload();
+    setDeleteConfirmText("");
+    setAuthSession(null);
+    setGuestMode(true);
+    setProfile(emptyProfile());
+    setProfileDraft(emptyProfile());
+    setSelectedProfileName("");
+    navigateToModule("home");
+    showNotice("Account deleted. Browsing as guest.");
+  }
+
+  async function submitBugReport() {
+    if (!bugReportDraft.trim()) {
+      showNotice("Bug report needs details", "error");
+      return;
+    }
+    const payload = {
+      userName: isSignedIn ? currentDisplayName : `Guest (${currentDisplayName})`,
+      userEmail: authSession?.user.email ?? "guest",
+      dateTime: new Date().toISOString(),
+      details: bugReportDraft.trim(),
+    };
+    if (!supabase) {
+      showNotice("Bug report email needs Supabase configuration", "error");
+      return;
+    }
+    const supabaseClient = supabase;
+    const storeBugReportFallback = async (emailError: string) => {
+      const report = {
+        id: uid("bug"),
+        userName: payload.userName,
+        userEmail: payload.userEmail,
+        dateTime: payload.dateTime,
+        details: payload.details,
+        emailed: false,
+        emailError,
+      };
+      const { error: tableError } = await supabaseClient.from("bug_reports").insert({
+        user_name: report.userName,
+        user_email: report.userEmail,
+        details: report.details,
+        reported_at: report.dateTime,
+        emailed: false,
+        email_error: emailError,
+      });
+      if (!tableError) {
+        return true;
+      }
+      const currentReports = await loadSupabaseState<Array<typeof report>>(
+        "everything-utm:bug-reports",
+      ).catch(() => []);
+      await saveSupabaseState("everything-utm:bug-reports", [
+        report,
+        ...((currentReports ?? []) as Array<typeof report>),
+      ].slice(0, 200));
+      return true;
+    };
+    const { data, error } = await supabase.functions.invoke("report-bug", {
+      body: payload,
+    });
+    if (error || data?.ok === false) {
+      try {
+        await storeBugReportFallback(
+          data?.reason || error?.message || "Bug report email function unavailable",
+        );
+      } catch {
+        showNotice("Bug report could not be saved", "error");
+        return;
+      }
+    }
+    setBugReportDraft("");
+    showNotice("Bug report submitted successfully");
+    addNotification("Bug report received", "Thanks for the report.", "settings");
+  }
+
+  if (!authReady) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="brand auth-brand">
+            <div className="brand-mark" aria-hidden="true">
+              <img src="/everythingutm-icon.png" alt="" />
+            </div>
+            <div>
+              <p>EverythingUTM</p>
+              <span>Loading campus hub</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (!canUseApp) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <div className="brand auth-brand">
+            <div className="brand-mark" aria-hidden="true">
+              <img src="/everythingutm-icon.png" alt="" />
+            </div>
+            <div>
+              <p>EverythingUTM</p>
+              <span>UTM Skudai in one place</span>
+            </div>
+          </div>
+          <div>
+            <p className="eyebrow">Welcome</p>
+            <h1>{authMode === "signup" ? "Create account" : "Sign in"}</h1>
+            <p className="muted">
+              Browse listings, chats, transport, maps, papers, and bus schedules
+              from one student hub.
+            </p>
+          </div>
+          <div className="segmented-control">
+            <button
+              className={authMode === "signin" ? "is-active" : ""}
+              type="button"
+              onClick={() => switchAuthMode("signin")}
+            >
+              Sign in
+            </button>
+            <button
+              className={authMode === "signup" ? "is-active" : ""}
+              type="button"
+              onClick={() => switchAuthMode("signup")}
+            >
+              Sign up
+            </button>
+          </div>
+          <form className="stacked-form" onSubmit={handleAuthSubmit}>
+            {authMode === "signup" && (
+              <div className="two-col">
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={authForm.name}
+                    onChange={(event) =>
+                      setAuthForm((form) => ({
+                        ...form,
+                        name: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Sex</span>
+                  <select
+                    value={authForm.sex}
+                    onChange={(event) =>
+                      setAuthForm((form) => ({ ...form, sex: event.target.value }))
+                    }
+                  >
+                    <option>Female</option>
+                    <option>Male</option>
+                    <option>Prefer not to say</option>
+                  </select>
+                </label>
+              </div>
+            )}
+            <label>
+              <span>Email</span>
+              <input
+                autoComplete="email"
+                type="email"
+                value={authForm.email}
+                onChange={(event) =>
+                  setAuthForm((form) => ({ ...form, email: event.target.value }))
+                }
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                autoComplete={
+                  authMode === "signup" ? "new-password" : "current-password"
+                }
+                type="password"
+                value={authForm.password}
+                onChange={(event) =>
+                  setAuthForm((form) => ({
+                    ...form,
+                    password: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <button className="primary-button full-width" type="submit">
+              <UserCircle size={17} aria-hidden="true" />
+              {authMode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+          <button
+            className="secondary-button full-width"
+            type="button"
+            onClick={signInWithGoogle}
+          >
+            <BadgeCheck size={17} aria-hidden="true" />
+            Continue with Google
+          </button>
+          {authMode === "signin" && (
+            <button
+              className="ghost-button full-width"
+              type="button"
+              onClick={resetPassword}
+            >
+              Reset password
+            </button>
+          )}
+          <button className="ghost-button full-width" type="button" onClick={browseAsGuest}>
+            Browse as guest
+          </button>
+          <p className="fine-print">
+            Production email limits are handled by configuring custom SMTP in Supabase.
+          </p>
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -2590,11 +4013,11 @@ export default function App() {
             >
               <PersonAvatar
                 image={profileData.profilePicture}
-                name={profileData.name}
+                name={currentDisplayName}
                 size={34}
               />
-              <span>{profileData.name}</span>
-              <small>{profileData.faculty}</small>
+              <span>{currentDisplayName}</span>
+              <small>{profileData.faculty || "Profile not set"}</small>
             </button>
           </div>
         </header>
@@ -2749,7 +4172,7 @@ export default function App() {
                   {requests.slice(0, 4).map((request) => (
                     <article className="compact-row" key={request.id}>
                       <div>
-                        <strong>{request.title}</strong>
+                        <strong>{request.title} </strong>
                         <span>
                           {request.pickup} {"->"} {request.dropoff}
                         </span>
@@ -2781,6 +4204,22 @@ export default function App() {
                     {category}
                   </button>
                 ))}
+                <label className="sort-control">
+                  <ArrowUpDown size={16} aria-hidden="true" />
+                  <span>Sort</span>
+                  <select
+                    value={marketSort}
+                    onChange={(event) =>
+                      setMarketSort(
+                        event.target.value as (typeof marketplaceSortOptions)[number],
+                      )
+                    }
+                  >
+                    {marketplaceSortOptions.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
@@ -3079,9 +4518,7 @@ export default function App() {
                               {t("buy")}
                             </button>
                           </div>
-                          {(item.seller === profileData.name ||
-                            item.sellerId === profileData.matricNumber ||
-                            isOwner) && (
+                          {isCurrentUserEntity(item.sellerId, item.seller) && (
                             <div className="card-actions compact-actions">
                               <button
                                 className="secondary-button mini-button"
@@ -3228,9 +4665,10 @@ export default function App() {
                     {t("buy")}
                   </button>
                 </div>
-                {(selectedListing.seller === profileData.name ||
-                  selectedListing.sellerId === profileData.matricNumber ||
-                  isOwner) && (
+                {isCurrentUserEntity(
+                  selectedListing.sellerId,
+                  selectedListing.seller,
+                ) && (
                   <div className="card-actions">
                     <button
                       className="secondary-button"
@@ -3590,20 +5028,22 @@ export default function App() {
                   />
                 ) : (
                   channelMessages.map((message) => {
-                    const liked = (message.likedBy ?? []).includes(
-                      profileData.matricNumber,
-                    );
                     const reactionEntries = Object.entries(
                       message.reactions ?? {},
                     ).filter(([, users]) => users.length > 0);
-                    const canManage = message.author === profileData.name || isOwner;
+                    const canManage = isCurrentUserEntity(
+                      message.authorId,
+                      message.author,
+                    );
                     return (
                       <article
                         className={`message-bubble ${
-                          message.author === profileData.name ? "is-mine" : ""
+                          isCurrentUserEntity(message.authorId, message.author)
+                            ? "is-mine"
+                            : ""
                         }`}
                         key={message.id}
-                        onDoubleClick={() => toggleMessageHeart(message.id)}
+                        onDoubleClick={() => reactToMessage(message.id, "❤️")}
                         onPointerCancel={() => cancelLongPress(message.id)}
                         onPointerDown={() =>
                           startLongPress(message.id, () =>
@@ -3677,19 +5117,11 @@ export default function App() {
                           </p>
                         )}
                         <div className="reaction-row">
-                          {(message.likedBy?.length ?? 0) > 0 && (
-                            <button
-                              className={`reaction-chip ${liked ? "is-active" : ""}`}
-                              type="button"
-                              onClick={() => toggleMessageHeart(message.id)}
-                            >
-                              <Heart size={14} aria-hidden="true" />
-                              {message.likedBy?.length}
-                            </button>
-                          )}
                           {reactionEntries.map(([reaction, users]) => (
                             <button
-                              className="reaction-chip"
+                              className={`reaction-chip ${
+                                users.includes(currentUserId) ? "is-active" : ""
+                              }`}
                               key={reaction}
                               type="button"
                               onClick={() => reactToMessage(message.id, reaction)}
@@ -3782,15 +5214,25 @@ export default function App() {
                   }
                 />
                 {messageVoice && (
-                  <button
-                    className="ghost-button mini-button voice-ready-chip"
-                    type="button"
-                    onClick={clearVoiceMessage}
-                  >
-                    <Mic size={14} aria-hidden="true" />
-                    {messageVoiceDuration}s
-                    <X size={13} aria-hidden="true" />
-                  </button>
+                  <div className="voice-preview">
+                    <audio controls src={messageVoice}>
+                      Voice preview
+                    </audio>
+                    <div className="voice-bars" aria-hidden="true">
+                      {Array.from({ length: 16 }).map((_, index) => (
+                        <span key={index} style={{ "--bar": `${(index % 5) + 3}` } as CSSProperties} />
+                      ))}
+                    </div>
+                    <button
+                      className="ghost-button mini-button voice-ready-chip"
+                      type="button"
+                      onClick={clearVoiceMessage}
+                    >
+                      <Mic size={14} aria-hidden="true" />
+                      {messageVoiceDuration}s
+                      <X size={13} aria-hidden="true" />
+                    </button>
+                  </div>
                 )}
                 <button className="primary-button" type="submit">
                   <Send size={17} aria-hidden="true" />
@@ -3808,6 +5250,22 @@ export default function App() {
                 <p className="eyebrow">Ask seniors, help juniors</p>
                 <h1>{t("qaTitle")}</h1>
               </div>
+              <label className="sort-control">
+                <ArrowUpDown size={16} aria-hidden="true" />
+                <span>Sort</span>
+                <select
+                  value={questionSort}
+                  onChange={(event) =>
+                    setQuestionSort(
+                      event.target.value as (typeof questionSortOptions)[number],
+                    )
+                  }
+                >
+                  {questionSortOptions.map((option) => (
+                    <option key={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <div className="qa-layout">
@@ -3892,7 +5350,7 @@ export default function App() {
                       <div className="question-body">
                         <div className="card-title-row">
                           <h2>{question.title}</h2>
-                          {question.author === profileData.name ? (
+                          {isCurrentUserEntity(question.authorId, question.author) ? (
                             <button
                               className={`status-pill ${
                                 question.resolved ? "is-good" : ""
@@ -3927,6 +5385,9 @@ export default function App() {
                           />
                           <span>
                             Asked by <strong>{question.author}</strong>
+                            {question.createdAt
+                              ? ` · ${formatDate(question.createdAt)}`
+                              : ""}
                           </span>
                         </button>
                         {editingQuestionId === question.id ? (
@@ -3998,7 +5459,10 @@ export default function App() {
                         )}
                         {questionActionId === question.id && (
                           <div className="message-actions question-actions">
-                            {(question.author === profileData.name || isOwner) && (
+                            {isCurrentUserEntity(
+                              question.authorId,
+                              question.author,
+                            ) && (
                               <button
                                 type="button"
                                 onClick={() => beginEditQuestion(question)}
@@ -4019,7 +5483,10 @@ export default function App() {
                               <Languages size={14} aria-hidden="true" />
                               Translate
                             </button>
-                            {(question.author === profileData.name || isOwner) && (
+                            {isCurrentUserEntity(
+                              question.authorId,
+                              question.author,
+                            ) && (
                               <button
                                 className="danger-text"
                                 type="button"
@@ -4039,7 +5506,7 @@ export default function App() {
                         <div className="answer-list">
                           {question.answers.map((answer) => {
                             const markedHelpful = (answer.helpfulBy ?? []).includes(
-                              profileData.matricNumber,
+                              currentUserId,
                             );
                             return (
                               <article
@@ -4526,10 +5993,15 @@ export default function App() {
                           setRequestDraft((draft) => ({
                             ...draft,
                             scheduleDay: event.target.value,
+                            scheduleTime:
+                              event.target.value === currentDayName() &&
+                              compareTimeValues(draft.scheduleTime, currentTimeValue()) < 0
+                                ? currentTimeValue()
+                                : draft.scheduleTime,
                           }))
                         }
                       >
-                        {dayOfWeekOptions.map((day) => (
+                        {availableTransportDays().map((day) => (
                           <option key={day}>{day}</option>
                         ))}
                       </select>
@@ -4538,6 +6010,11 @@ export default function App() {
                       <span>Time</span>
                       <input
                         type="time"
+                        min={
+                          requestDraft.scheduleDay === currentDayName()
+                            ? currentTimeValue()
+                            : undefined
+                        }
                         value={requestDraft.scheduleTime}
                         onChange={(event) =>
                           setRequestDraft((draft) => ({
@@ -4551,30 +6028,22 @@ export default function App() {
                   <div className="two-col">
                     <label>
                       <span>Budget</span>
-                      <input
-                        inputMode="decimal"
-                        value={requestDraft.budget}
-                        onFocus={() =>
-                          setRequestDraft((draft) => ({
-                            ...draft,
-                            budget: /free/i.test(draft.budget) ? "" : draft.budget,
-                          }))
-                        }
-                        onBlur={() =>
-                          setRequestDraft((draft) => ({
-                            ...draft,
-                            budget: draft.budget.trim()
-                              ? draft.budget
-                              : budgetInputLabel(draft.type),
-                          }))
-                        }
-                        onChange={(event) =>
-                          setRequestDraft((draft) => ({
-                            ...draft,
-                            budget: event.target.value,
-                          }))
-                        }
-                      />
+                      <div className="price-field">
+                        <input
+                          maxLength={2}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          type="text"
+                          value={requestDraft.budget}
+                          onChange={(event) =>
+                            setRequestDraft((draft) => ({
+                              ...draft,
+                              budget: sanitizeBudgetInput(event.target.value),
+                            }))
+                          }
+                        />
+                        {requestDraft.budget && <span>RM</span>}
+                      </div>
                     </label>
                   </div>
                   <label>
@@ -4753,8 +6222,10 @@ export default function App() {
                       )}
                       <div className="card-actions">
                         {request.status === "Open" &&
-                          request.requester !== profileData.name &&
-                          request.requesterId !== profileData.matricNumber && (
+                          !isCurrentUserEntity(
+                            request.requesterId,
+                            request.requester,
+                          ) && (
                           <button
                             className="secondary-button"
                             type="button"
@@ -4777,8 +6248,10 @@ export default function App() {
                           </button>
                         )}
                         {request.status === "Paid" &&
-                          (request.requester === profileData.name ||
-                            request.requesterId === profileData.matricNumber) && (
+                          isCurrentUserEntity(
+                            request.requesterId,
+                            request.requester,
+                          ) && (
                           <button
                             className="secondary-button"
                             type="button"
@@ -4851,18 +6324,36 @@ export default function App() {
                 </label>
                 <div className="bus-route-list">
                   {visibleBusRoutes.map((route) => (
-                    <button
-                      className={`bus-route-row ${
-                        selectedBusRoute.id === route.id ? "is-active" : ""
-                      }`}
-                      key={route.id}
-                      type="button"
-                      onClick={() => setSelectedBusRouteId(route.id)}
-                    >
-                      <strong>{route.code}</strong>
-                      <span>{route.route}</span>
-                      <small>{route.service}</small>
-                    </button>
+                    (() => {
+                      const routeStops = uniqueBusStops(route);
+                      const routeStop = routeStops.includes(activeBusStop)
+                        ? activeBusStop
+                        : routeStops[0] ?? "";
+                      const availability = busAvailability(route, routeStop);
+                      return (
+                        <button
+                          className={`bus-route-row ${
+                            selectedBusRoute.id === route.id ? "is-active" : ""
+                          }`}
+                          key={route.id}
+                          type="button"
+                          onClick={() => setSelectedBusRouteId(route.id)}
+                        >
+                          <div className="bus-route-title">
+                            <strong>{route.code}</strong>
+                            <span
+                              className={`bus-availability ${
+                                availability.minutes !== null ? "is-available" : ""
+                              }`}
+                            >
+                              {availability.label}
+                            </span>
+                          </div>
+                          <span>{route.route}</span>
+                          <small>{route.service}</small>
+                        </button>
+                      );
+                    })()
                   ))}
                 </div>
               </section>
@@ -4876,13 +6367,39 @@ export default function App() {
                 </div>
                 <div className="bus-summary-strip">
                   <span className="pill">{selectedBusDocument.effective}</span>
+                  <span
+                    className={`bus-availability ${
+                      selectedBusAvailability.minutes !== null
+                        ? "is-available"
+                        : ""
+                    }`}
+                  >
+                    {selectedBusAvailability.label}
+                  </span>
                   <span>{selectedBusDocument.appliesTo}</span>
                 </div>
+                <label className="bus-stop-select">
+                  <MapPin size={16} aria-hidden="true" />
+                  <span>Calculate for stop</span>
+                  <select
+                    value={activeBusStop}
+                    onChange={(event) => setSelectedBusStop(event.target.value)}
+                  >
+                    {selectedBusStops.map((stop) => (
+                      <option key={stop}>{stop}</option>
+                    ))}
+                  </select>
+                </label>
                 <div className="bus-stop-flow">
-                  {selectedBusRoute.directions.map((stop, index) => (
-                    <span key={`${selectedBusRoute.id}-${stop}-${index}`}>
+                  {selectedBusStops.map((stop, index) => (
+                    <button
+                      className={activeBusStop === stop ? "is-active" : ""}
+                      key={`${selectedBusRoute.id}-${stop}-${index}`}
+                      type="button"
+                      onClick={() => setSelectedBusStop(stop)}
+                    >
                       {stop}
-                    </span>
+                    </button>
                   ))}
                 </div>
                 <figure className="bus-timetable-image">
@@ -4927,6 +6444,28 @@ export default function App() {
             </div>
 
             <div className="profile-layout">
+              {guestMode && !isSignedIn && (
+                <section className="panel auth-inline-panel">
+                  <div className="panel-heading">
+                    <h2>Guest mode</h2>
+                    <UserCircle size={18} aria-hidden="true" />
+                  </div>
+                  <p className="muted">
+                    Sign in to save your profile, listings, chats, reviews, and requests
+                    to Supabase.
+                  </p>
+                  <button
+                    className="primary-button full-width"
+                    type="button"
+                    onClick={() => {
+                      setGuestMode(false);
+                      switchAuthMode("signin");
+                    }}
+                  >
+                    Sign in or create account
+                  </button>
+                </section>
+              )}
               <section className="panel profile-card-panel">
                 <div className="profile-photo">
                   {(viewingOwnProfile
@@ -4956,16 +6495,22 @@ export default function App() {
                   </label>
                 )}
                 <div className="profile-card-text">
-                  <h2>{viewingOwnProfile ? profileDraft.name : selectedProfile.name}</h2>
+                  <h2>
+                    {viewingOwnProfile
+                      ? profileDraft.name || currentDisplayName
+                      : selectedProfile.name || "UTM user"}
+                  </h2>
                   <p>
                     {viewingOwnProfile
-                      ? profileDraft.matricNumber
-                      : selectedProfile.matricNumber}
+                      ? profileDraft.matricNumber || "Matric number not set"
+                      : selectedProfile.matricNumber || "Not shared"}
                   </p>
                   <span>
-                    {viewingOwnProfile ? profileDraft.faculty : selectedProfile.faculty}
+                    {viewingOwnProfile
+                      ? profileDraft.faculty || "Faculty not set"
+                      : selectedProfile.faculty || "Faculty not shared"}
                   </span>
-                  <small>{selectedProfile.role}</small>
+                  {selectedProfile.role && <small>{selectedProfile.role}</small>}
                   <div className="profile-stats">
                     <span>
                       <Star size={14} aria-hidden="true" />
@@ -4986,7 +6531,10 @@ export default function App() {
                   <div className="stacked-form">
                     <div className="two-col">
                       <label>
-                        <span>Name</span>
+                        <span className="field-label-icon">
+                          <UserCircle size={14} aria-hidden="true" />
+                          Name
+                        </span>
                         <input
                           value={profileDraft.name}
                           onChange={(event) =>
@@ -4998,7 +6546,10 @@ export default function App() {
                         />
                       </label>
                       <label>
-                        <span>Contact number</span>
+                        <span className="field-label-icon">
+                          <Phone size={14} aria-hidden="true" />
+                          Contact number
+                        </span>
                         <input
                           value={profileDraft.contactNumber}
                           onChange={(event) =>
@@ -5012,7 +6563,10 @@ export default function App() {
                     </div>
                     <div className="two-col">
                       <label>
-                        <span>Matric number</span>
+                        <span className="field-label-icon">
+                          <IdCard size={14} aria-hidden="true" />
+                          Matric number
+                        </span>
                         <input
                           value={profileDraft.matricNumber}
                           onChange={(event) =>
@@ -5024,7 +6578,10 @@ export default function App() {
                         />
                       </label>
                       <label>
-                        <span>Study year</span>
+                        <span className="field-label-icon">
+                          <GraduationCap size={14} aria-hidden="true" />
+                          Study year
+                        </span>
                         <select
                           value={profileDraft.studyYear}
                           onChange={(event) =>
@@ -5034,6 +6591,7 @@ export default function App() {
                             }))
                           }
                         >
+                          <option value="">Select study year</option>
                           <option>Foundation</option>
                           <option>Year 1</option>
                           <option>Year 2</option>
@@ -5044,7 +6602,10 @@ export default function App() {
                       </label>
                     </div>
                     <label>
-                      <span>Faculty</span>
+                      <span className="field-label-icon">
+                        <Building2 size={14} aria-hidden="true" />
+                        Faculty
+                      </span>
                       <select
                         value={profileDraft.faculty}
                         onChange={(event) =>
@@ -5054,6 +6615,7 @@ export default function App() {
                           }))
                         }
                       >
+                        <option value="">Select faculty</option>
                         {faculties
                           .filter((faculty) => faculty !== "All")
                           .map((faculty) => (
@@ -5063,7 +6625,10 @@ export default function App() {
                     </label>
                     <div className="two-col">
                       <label>
-                        <span>Age</span>
+                        <span className="field-label-icon">
+                          <Cake size={14} aria-hidden="true" />
+                          Age
+                        </span>
                         <input
                           min="16"
                           type="number"
@@ -5077,7 +6642,10 @@ export default function App() {
                         />
                       </label>
                       <label>
-                        <span>Sex</span>
+                        <span className="field-label-icon">
+                          <Users size={14} aria-hidden="true" />
+                          Sex
+                        </span>
                         <select
                           value={profileDraft.sex}
                           onChange={(event) =>
@@ -5087,6 +6655,7 @@ export default function App() {
                             }))
                           }
                         >
+                          <option value="">Select sex</option>
                           <option>Female</option>
                           <option>Male</option>
                           <option>Prefer not to say</option>
@@ -5110,11 +6679,26 @@ export default function App() {
                     <UserRound size={18} aria-hidden="true" />
                   </div>
                   <div className="profile-detail-list">
-                    <span>Contact: {selectedProfile.contactNumber}</span>
-                    <span>Study year: {selectedProfile.studyYear}</span>
-                    <span>Faculty: {selectedProfile.faculty}</span>
-                    <span>Age: {selectedProfile.age || "Not shared"}</span>
-                    <span>Sex: {selectedProfile.sex || "Not shared"}</span>
+                    <span>
+                      <Phone size={15} aria-hidden="true" />
+                      Contact: {selectedProfile.contactNumber || "Not shared"}
+                    </span>
+                    <span>
+                      <GraduationCap size={15} aria-hidden="true" />
+                      Study year: {selectedProfile.studyYear || "Not shared"}
+                    </span>
+                    <span>
+                      <Building2 size={15} aria-hidden="true" />
+                      Faculty: {selectedProfile.faculty || "Not shared"}
+                    </span>
+                    <span>
+                      <Cake size={15} aria-hidden="true" />
+                      Age: {selectedProfile.age || "Not shared"}
+                    </span>
+                    <span>
+                      <Users size={15} aria-hidden="true" />
+                      Sex: {selectedProfile.sex || "Not shared"}
+                    </span>
                   </div>
                 </section>
               )}
@@ -5192,6 +6776,34 @@ export default function App() {
             </div>
 
             <div className="settings-layout">
+              <section className="panel settings-info-panel auth-inline-panel">
+                <div className="panel-heading">
+                  <h2>{isSignedIn ? "Account" : "Guest access"}</h2>
+                  <UserCircle size={18} aria-hidden="true" />
+                </div>
+                <p className="muted settings-note">
+                  {isSignedIn
+                    ? `Signed in as ${authSession?.user.email ?? profileData.name}.`
+                    : "You are browsing as a guest. Sign in to sync your data and account profile."}
+                </p>
+                {isSignedIn ? (
+                  <button className="secondary-button full-width" type="button" onClick={signOut}>
+                    <ExternalLink size={16} aria-hidden="true" />
+                    Sign out
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button full-width"
+                    type="button"
+                    onClick={() => {
+                      setGuestMode(false);
+                      switchAuthMode("signin");
+                    }}
+                  >
+                    Sign in
+                  </button>
+                )}
+              </section>
               <section className="panel">
                 <div className="panel-heading">
                   <h2>{t("appearance")}</h2>
@@ -5336,15 +6948,13 @@ export default function App() {
                 </div>
                 <textarea
                   rows={4}
-                  placeholder="Describe the issue, page, and steps to reproduce"
+                  value={bugReportDraft}
+                  onChange={(event) => setBugReportDraft(event.target.value)}
                 />
                 <button
                   className="secondary-button"
                   type="button"
-                  onClick={() => {
-                    showNotice("Bug report saved for owner review");
-                    addNotification("Bug report received", "Thanks for the report.", "settings");
-                  }}
+                  onClick={submitBugReport}
                 >
                   <Send size={16} aria-hidden="true" />
                   {t("reportBug")}
@@ -5357,6 +6967,15 @@ export default function App() {
                   <Trash2 size={18} aria-hidden="true" />
                 </div>
                 <p>{t("deleteWarning")}</p>
+                {deleteAccountArmed && (
+                  <label className="delete-confirm-field">
+                    <span>Type DELETE to confirm</span>
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(event) => setDeleteConfirmText(event.target.value)}
+                    />
+                  </label>
+                )}
                 <button
                   className="danger-button"
                   type="button"

@@ -12,17 +12,17 @@ import type {
   ServiceRequest,
 } from "./types";
 
-export const appUser = {
-  name: "Aina Rahman",
-  role: "UTM Student",
-  contactNumber: "+60 12-345 6789",
-  matricNumber: "A23CS0123",
-  studyYear: "Year 2",
-  faculty: "Faculty of Computing",
-  age: "21",
-  sex: "Female",
+export const appUser: Profile = {
+  name: "",
+  role: "",
+  contactNumber: "",
+  matricNumber: "",
+  studyYear: "",
+  faculty: "",
+  age: "",
+  sex: "",
   profilePicture: "",
-  wallet: 128.4,
+  wallet: 0,
 };
 
 export const marketplaceCategories = [
@@ -78,21 +78,6 @@ export const busScheduleDocuments: BusScheduleDocument[] = [
     ],
   },
   {
-    id: "semester-break-2026",
-    title: "End of Semester 1 Break Shuttle",
-    sourceName:
-      "Jadual shuttle sepanjang cuti akhir sem 1 sesi 2025_2026 bermula 9_2_2026.pdf",
-    effective: "From 9 February 2026",
-    appliesTo: "Semester 1 break shuttle operations",
-    fileUrl: "/bus-schedules/jadual-shuttle-cuti-akhir-sem-1-2025-2026.pdf",
-    summary:
-      "Special shuttle timetable for the end of Semester 1 break period in the 2025/2026 session.",
-    notes: [
-      "Use this only during the listed break period.",
-      "Regular semester routes may not follow the same timing during holiday operations.",
-    ],
-  },
-  {
     id: "bdr-tuesday-thursday-2026",
     title: "BDR Tuesday and Thursday Shuttle",
     sourceName: "Jadual Shuttle Sepanjang BDR setiap Selasa dan Khamis 2026.pdf",
@@ -133,22 +118,6 @@ const regularRoutes = [
   ["E2 Weekend", "Weekend KDOJ, KLG and KDSE to Kolej 9/10", "KDOJ - KLG - KDSE - Kolej 9/10"],
 ] as const;
 
-const breakRoutes = [
-  ["B1", "KP and Kolej 9/10 to Cluster", "KP - K9/10 - T02 - T08 - K9/10 - KP"],
-  ["B2", "KP and Kolej 9/10 to Cluster", "KP - K9/10 - T02 - T08 - K9/10 - KP"],
-  ["B3", "KP and Kolej 9/10 to Cluster", "KP - K9/10 - T02 - T08 - K9/10 - KP"],
-  ["C1", "Kolej 9/10 to Lingkaran Ilmu", "K9/10 - KTC - CP - Jalan Amal - KTC - K9/10"],
-  ["C2", "Kolej 9/10 to Lingkaran Ilmu", "K9/10 - KTC - CP - Jalan Amal - KTC - K9/10"],
-  ["E1", "KDOJ, KLG and KDSE to Cluster", "KDOJ - KLG - KDSE - T02/T08"],
-  ["E2", "KDOJ, KLG and KDSE to Cluster", "KDOJ - KLG - KDSE - T02/T08"],
-  ["E3", "KDOJ, KLG and KDSE to Cluster", "KDOJ - KLG - KDSE - T02/T08"],
-  ["E4", "KDOJ, KLG and KDSE to Cluster", "KDOJ - KLG - KDSE - T02/T08"],
-  ["E5", "KDOJ, KLG and KDSE to Cluster", "KDOJ - KLG - KDSE - T02/T08"],
-  ["E6", "KDOJ and KLG to Cluster", "KDOJ - KLG - T02/T08"],
-  ["E1 Weekend", "Weekend KDOJ, KLG and KDSE to Kolej 9/10", "KDOJ - KLG - KDSE - Kolej 9/10"],
-  ["E2 Weekend", "Weekend KDOJ, KLG and KDSE to Kolej 9/10", "KDOJ - KLG - KDSE - Kolej 9/10"],
-] as const;
-
 const bdrRoutes = [
   ["A1", "KP (U7) to Center Point via Jalan Amal", "KP - CP - Jalan Amal - KP"],
   ["B1", "KP and Kolej 9/10 to Cluster", "KP - K9/10 - T02 - T08 - K9/10 - KP"],
@@ -176,17 +145,6 @@ export const busScheduleRoutes: BusScheduleRoute[] = [
       "No service from 12:40 to 14:00 every Friday where stated.",
       "No Saturday, Sunday, public holiday, or semester-break service unless this is a weekend route.",
     ],
-  })),
-  ...breakRoutes.map(([code, route, service], index) => ({
-    id: `break-${index + 1}`,
-    documentId: "semester-break-2026",
-    code,
-    route,
-    service,
-    directions: service.split(" - "),
-    pageImage: `/bus-schedules/pages/break-${String(index + 1).padStart(2, "0")}.jpg`,
-    pdfPage: index + 1,
-    notes: ["Semester break timetable starting 9 February 2026."],
   })),
   ...bdrRoutes.map(([code, route, service], index) => ({
     id: `bdr-${index + 1}`,
@@ -218,175 +176,11 @@ export const faculties = [
   "Malaysia-Japan International Institute of Technology (MJIIT)",
 ];
 
-export const seedProfiles: Profile[] = [
-  appUser,
-  {
-    name: "Hafiz",
-    role: "Marketplace seller",
-    contactNumber: "+60 11-222 3344",
-    matricNumber: "A22CS0456",
-    studyYear: "Year 3",
-    faculty: "Faculty of Computing",
-    age: "22",
-    sex: "Male",
-    profilePicture: "",
-    wallet: 0,
-  },
-  {
-    name: "Mei Lin",
-    role: "UTM Student",
-    contactNumber: "+60 16-555 8800",
-    matricNumber: "A23BE0101",
-    studyYear: "Year 2",
-    faculty: "Faculty of Built Environment and Surveying",
-    age: "21",
-    sex: "Female",
-    profilePicture: "",
-    wallet: 0,
-  },
-  {
-    name: "Kumar",
-    role: "Lab project seller",
-    contactNumber: "+60 12-888 1234",
-    matricNumber: "A21EE0299",
-    studyYear: "Year 4",
-    faculty: "Faculty of Electrical Engineering",
-    age: "23",
-    sex: "Male",
-    profilePicture: "",
-    wallet: 0,
-  },
-  {
-    name: "Farah",
-    role: "Community helper",
-    contactNumber: "+60 13-909 7788",
-    matricNumber: "A23CS0777",
-    studyYear: "Year 2",
-    faculty: "Faculty of Computing",
-    age: "21",
-    sex: "Female",
-    profilePicture: "",
-    wallet: 0,
-  },
-];
+export const seedProfiles: Profile[] = [];
 
-export const seedProfileReviews: ProfileReview[] = [
-  {
-    id: "review-1",
-    profileName: "Hafiz",
-    reviewer: "Aina Rahman",
-    rating: 5,
-    body: "Met at KTR, item matched the listing, and communication was quick.",
-    createdAt: "2026-05-12T08:30:00.000Z",
-  },
-  {
-    id: "review-2",
-    profileName: "Farah",
-    reviewer: "Yusuf",
-    rating: 5,
-    body: "Helpful answers and very clear with study spot recommendations.",
-    createdAt: "2026-05-13T13:10:00.000Z",
-  },
-];
+export const seedProfileReviews: ProfileReview[] = [];
 
-export const seedMarketplace: MarketplaceItem[] = [
-  {
-    id: "mkt-1",
-    title: "Calculus textbook bundle",
-    category: "Books",
-    price: 55,
-    seller: "Hafiz",
-    location: "Kolej Tun Razak",
-    fulfillment: "Pickup",
-    condition: "Good",
-    paymentPreference: "DuitNow QR",
-    description: "Thomas Calculus plus tutorial notes. Clean pages, light cover wear.",
-    image:
-      "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=900&q=80",
-    tags: ["math", "foundation", "notes"],
-    createdAt: "2026-05-14T09:30:00.000Z",
-  },
-  {
-    id: "mkt-2",
-    title: "Mini fridge for hostel",
-    category: "Room",
-    price: 180,
-    seller: "Mei Lin",
-    location: "Kolej 9",
-    fulfillment: "Pickup",
-    condition: "Slightly Used",
-    paymentPreference: "Cash",
-    description: "Compact fridge, quiet compressor, pickup after finals week.",
-    image:
-      "https://images.unsplash.com/photo-1584568694244-14fbdf83bd30?auto=format&fit=crop&w=900&q=80",
-    tags: ["hostel", "appliance", "pickup"],
-    createdAt: "2026-05-13T15:00:00.000Z",
-  },
-  {
-    id: "mkt-3",
-    title: "Arduino starter kit",
-    category: "Electronics",
-    price: 95,
-    seller: "Kumar",
-    location: "Faculty of Electrical Engineering",
-    fulfillment: "Pickup",
-    condition: "New",
-    paymentPreference: "Bank Transfer",
-    description: "Board, sensors, breadboard, jumper wires, and storage box.",
-    image:
-      "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=900&q=80",
-    tags: ["embedded", "project", "lab"],
-    createdAt: "2026-05-12T12:45:00.000Z",
-  },
-  {
-    id: "mkt-4",
-    title: "Foldable bicycle",
-    category: "Transport",
-    price: 260,
-    seller: "Nabil",
-    location: "Dewan Sultan Iskandar",
-    fulfillment: "Pickup",
-    condition: "Good",
-    paymentPreference: "TnG wallet",
-    description: "Great for moving between faculties. Includes front light and lock.",
-    image:
-      "https://images.unsplash.com/photo-1485965120184-e220f721d03e?auto=format&fit=crop&w=900&q=80",
-    tags: ["cycle", "campus", "commute"],
-    createdAt: "2026-05-11T18:10:00.000Z",
-  },
-  {
-    id: "mkt-5",
-    title: "Meal prep nasi ayam set",
-    category: "Food",
-    price: 8,
-    seller: "Dapur Kolej",
-    location: "Arked Cengal",
-    fulfillment: "Delivery",
-    condition: "Fresh",
-    paymentPreference: "Cash",
-    description: "Lunch preorder. Pickup from 12:30 PM to 2:00 PM.",
-    image:
-      "https://images.unsplash.com/photo-1569058242567-93de6f36f8eb?auto=format&fit=crop&w=900&q=80",
-    tags: ["lunch", "halal", "preorder"],
-    createdAt: "2026-05-15T07:20:00.000Z",
-  },
-  {
-    id: "mkt-6",
-    title: "Poster design help",
-    category: "Services",
-    price: 35,
-    seller: "Sara",
-    location: "PSZ Library",
-    fulfillment: "Delivery",
-    condition: "Good",
-    paymentPreference: "DuitNow QR",
-    description: "Research poster, club event poster, and presentation template support.",
-    image:
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80",
-    tags: ["design", "club", "poster"],
-    createdAt: "2026-05-10T11:05:00.000Z",
-  },
-];
+export const seedMarketplace: MarketplaceItem[] = [];
 
 export const campusLocations: CampusLocation[] = [
   {
@@ -711,130 +505,11 @@ export const campusLocations: CampusLocation[] = [
   { id: "loc-added-johor-bahru-senai-international-airpor-60", name: "Johor Bahru Senai International Airport", category: "Services", lat: 1.635894, lng: 103.6679273, area: "UTM nearby service", blurb: "Johor Bahru Senai International Airport is the main airport option for UTM students planning flights, airport rides, or luggage pickup.", bestFor: ["Errands", "Transport", "Student support"] },
 ];
 
-export const seedMessages: ChatMessage[] = [
-  {
-    id: "msg-1",
-    channel: "General",
-    author: "Aqil",
-    authorAvatar: "",
-    content: "Anyone going to DSI tonight for the tech talk?",
-    time: "2026-05-15T10:05:00.000Z",
-  },
-  {
-    id: "msg-2",
-    channel: "Lost & Found",
-    author: "Jia",
-    authorAvatar: "",
-    content: "Found a black bottle near PSZ. I left it at the counter.",
-    time: "2026-05-15T10:20:00.000Z",
-  },
-  {
-    id: "msg-3",
-    channel: "Assignments",
-    author: "Amir",
-    authorAvatar: "",
-    content: "SECI2143 group wants one more member for the mini project.",
-    time: "2026-05-15T11:12:00.000Z",
-  },
-  {
-    id: "msg-4",
-    channel: "Food",
-    author: "Nora",
-    authorAvatar: "",
-    content: "Arked Cengal ayam penyet queue is short right now.",
-    time: "2026-05-15T12:35:00.000Z",
-  },
-];
+export const seedMessages: ChatMessage[] = [];
 
-export const seedQuestions: Question[] = [
-  {
-    id: "q-1",
-    title: "Best quiet study spots after 8 PM?",
-    body: "PSZ gets packed during revision week. Any calm alternatives around central campus?",
-    author: "Farah",
-    authorAvatar: "",
-    tags: ["study", "library", "night"],
-    votes: 18,
-    resolved: false,
-    answers: [
-      {
-        id: "a-1",
-        author: "Yusuf",
-        authorAvatar: "",
-        body: "Try the upper levels of PRZS first, then faculty common rooms if your building stays open.",
-        helpful: 9,
-        helpfulBy: [],
-        time: "2026-05-13T20:10:00.000Z",
-      },
-    ],
-  },
-  {
-    id: "q-2",
-    title: "How early should I book a driver to Senai Airport?",
-    body: "Morning flight from Senai. I am staying around Kolej 10.",
-    author: "Daniel",
-    authorAvatar: "",
-    tags: ["airport", "transport"],
-    votes: 11,
-    resolved: true,
-    answers: [
-      {
-        id: "a-2",
-        author: "Aina",
-        authorAvatar: "",
-        body: "For morning flights, book the night before and leave buffer for campus gate traffic.",
-        helpful: 14,
-        helpfulBy: [],
-        time: "2026-05-12T09:00:00.000Z",
-      },
-    ],
-  },
-];
+export const seedQuestions: Question[] = [];
 
-export const seedPapers: PastPaper[] = [
-  {
-    id: "paper-1",
-    code: "SECJ1013",
-    title: "Programming Technique I Final",
-    faculty: "Faculty of Computing",
-    year: "2025",
-    semester: "Semester 1",
-    type: "Final",
-    uploader: "Aina",
-    fileName: "SECJ1013-final-2025.pdf",
-    fileSize: "1.8 MB",
-    status: "Approved",
-    downloads: 74,
-  },
-  {
-    id: "paper-2",
-    code: "SECI2143",
-    title: "Probability and Statistical Data Analysis",
-    faculty: "Faculty of Computing",
-    year: "2024",
-    semester: "Semester 2",
-    type: "Test 1",
-    uploader: "Kumar",
-    fileName: "SECI2143-midterm-2024.pdf",
-    fileSize: "940 KB",
-    status: "Approved",
-    downloads: 51,
-  },
-  {
-    id: "paper-3",
-    code: "SKMM2313",
-    title: "Thermodynamics Past Year Questions",
-    faculty: "Faculty of Mechanical Engineering",
-    year: "2025",
-    semester: "Semester 2",
-    type: "Final",
-    uploader: "Nabil",
-    fileName: "SKMM2313-final-2025.pdf",
-    fileSize: "2.4 MB",
-    status: "Approved",
-    downloads: 63,
-  },
-];
+export const seedPapers: PastPaper[] = [];
 
 export const externalDrives: ExternalDrive[] = [
   {
@@ -874,33 +549,4 @@ export const externalDrives: ExternalDrive[] = [
   },
 ];
 
-export const seedRequests: ServiceRequest[] = [
-  {
-    id: "req-1",
-    type: "Ride",
-    title: "Ride to Paradigm Mall",
-    requester: "Aina",
-    pickup: "Kolej Perdana",
-    dropoff: "Paradigm Mall Johor Bahru",
-    schedule: "Today, 6:30 PM",
-    budget: 18,
-    paymentPreference: "TnG wallet",
-    notes: "Two passengers with one small bag.",
-    status: "Open",
-  },
-  {
-    id: "req-2",
-    type: "Delivery",
-    title: "Collect printing from PSZ",
-    requester: "Farah",
-    pickup: "PSZ Library",
-    dropoff: "Kolej Tun Dr Ismail",
-    schedule: "Today, 3:00 PM",
-    budget: 7,
-    paymentPreference: "Cash",
-    notes: "Paid printout at counter, just need pickup.",
-    status: "Matched",
-    driver: "Hakim",
-  },
-];
-
+export const seedRequests: ServiceRequest[] = [];
