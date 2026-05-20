@@ -3,6 +3,8 @@ import {
   type ChangeEvent,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useState,
@@ -25,8 +27,10 @@ import {
   useClerk,
   useUser,
 } from "@clerk/clerk-react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import Dock from "./components/Dock";
+import Stepper, { Step } from "./components/Stepper";
 import {
   ArrowUpDown,
   BadgeCheck,
@@ -55,8 +59,10 @@ import {
   HelpCircle,
   Home,
   ImagePlus,
+  Images,
   IdCard,
   Languages,
+  Layers3,
   MapPin,
   MapPinned,
   Maximize2,
@@ -75,6 +81,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  ShieldAlert,
   ShoppingBag,
   Share2,
   Star,
@@ -104,6 +111,7 @@ import {
 import { isConvexConfigured } from "./lib/convex";
 import type {
   AppSettings,
+  BusScheduleDocument,
   CampusLocation,
   ChatMessage,
   LanguageCode,
@@ -119,6 +127,9 @@ import type {
   ServiceRequest,
 } from "./types";
 
+const DomeGallery = lazy(() => import("./components/DomeGallery"));
+const Stack = lazy(() => import("./components/Stack"));
+
 const navItems: NavItem[] = [
   { key: "home", label: "Home", icon: Home },
   { key: "marketplace", label: "Marketplace", icon: Store },
@@ -128,7 +139,10 @@ const navItems: NavItem[] = [
   { key: "papers", label: "Past Papers", icon: FolderArchive },
   { key: "requests", label: "Transportation", icon: CarFront },
   { key: "bus", label: "Bus Schedule", icon: CalendarClock },
+  { key: "family", label: "Our Family", icon: Images },
+  { key: "reels", label: "Marketplace Reels", icon: Layers3 },
   { key: "profile", label: "Profile", icon: UserCircle },
+  { key: "admin", label: "Admin", icon: ShieldAlert },
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -210,7 +224,10 @@ const moduleSlugs: Record<ModuleKey, string> = {
   papers: "past-papers",
   requests: "transportation",
   bus: "bus-schedule",
+  family: "our-family",
+  reels: "marketplace-reels",
   profile: "profile",
+  admin: "admin",
   settings: "settings",
   notifications: "notifications",
 };
@@ -561,7 +578,10 @@ const localizedNavLabels: Record<LanguageCode, Partial<Record<ModuleKey, string>
     papers: "Kertas Lepas",
     requests: "Pengangkutan",
     bus: "Jadual Bas",
+    family: "Keluarga",
+    reels: "Reels Pasaran",
     profile: "Profil",
+    admin: "Admin",
     settings: "Tetapan",
   },
   ar: {
@@ -573,7 +593,10 @@ const localizedNavLabels: Record<LanguageCode, Partial<Record<ModuleKey, string>
     papers: "نماذج سابقة",
     requests: "النقل",
     bus: "جدول الحافلات",
+    family: "عائلتنا",
+    reels: "عروض السوق",
     profile: "الملف",
+    admin: "المشرف",
     settings: "الإعدادات",
   },
   zh: {
@@ -585,7 +608,10 @@ const localizedNavLabels: Record<LanguageCode, Partial<Record<ModuleKey, string>
     papers: "历年试卷",
     requests: "交通",
     bus: "巴士时间表",
+    family: "我们的家庭",
+    reels: "市场短片",
     profile: "个人资料",
+    admin: "管理员",
     settings: "设置",
   },
 };
@@ -830,6 +856,35 @@ function sanitizePhoneInput(value: string) {
   return value.replace(/\D/g, "").slice(0, 16);
 }
 
+function sanitizePlainText(value: string, maxLength = 500) {
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeLongText(value: string, maxLength = 2000) {
+  return value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeNameInput(value: string) {
+  return value
+    .replace(/[^\p{L}\p{M}\s'.-]/gu, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 70);
+}
+
+function sanitizeAgeInput(value: string) {
+  const numeric = value.replace(/\D/g, "").slice(0, 3);
+  if (!numeric) return "";
+  return String(Math.min(120, Number(numeric)));
+}
+
 function sanitizeUsername(value: string) {
   return value
     .toLowerCase()
@@ -881,7 +936,7 @@ function normalize(value: string) {
 function compactTags(value: string) {
   return value
     .split(",")
-    .map((tag) => tag.trim())
+    .map((tag) => sanitizePlainText(tag, 24).replace(/^#/, ""))
     .filter(Boolean);
 }
 
@@ -1705,6 +1760,41 @@ function NoticeBanner({
   );
 }
 
+function SkeletonScreen({ label = "Loading EverythingUTM" }: { label?: string }) {
+  return (
+    <div className="app-shell skeleton-shell" aria-busy="true" aria-label={label}>
+      <aside className="sidebar">
+        <div className="skeleton-brand">
+          <span className="skeleton-box skeleton-logo" />
+          <span className="skeleton-line short" />
+        </div>
+        <div className="skeleton-nav">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <span className="skeleton-line" key={index} />
+          ))}
+        </div>
+      </aside>
+      <main className="main-content">
+        <div className="topbar">
+          <span className="skeleton-box skeleton-search" />
+          <span className="skeleton-box skeleton-chip" />
+        </div>
+        <section className="module">
+          <div className="skeleton-heading">
+            <span className="skeleton-line short" />
+            <span className="skeleton-line title" />
+          </div>
+          <div className="skeleton-grid">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <span className="skeleton-box skeleton-card" key={index} />
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function PersonAvatar({
   name,
   image,
@@ -1761,6 +1851,8 @@ function RequestPinPicker({
 
 export default function App() {
   const { isLoaded: authReady, isSignedIn: clerkSignedIn } = useAuth();
+  const { isAuthenticated: convexAuthenticated, isLoading: convexAuthLoading } =
+    useConvexAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const isSignedIn = Boolean(authReady && clerkSignedIn && user);
@@ -1828,6 +1920,12 @@ export default function App() {
     [],
     { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
+  const [appBusDocuments, setAppBusDocuments] = useLocalStorageState<
+    BusScheduleDocument[]
+  >("everything-utm:bus-documents", busScheduleDocuments, {
+    reloadKey: onlineReloadKey,
+    syncOnline: shouldSyncOnline,
+  });
   const [requests, setRequests] = useLocalStorageState<ServiceRequest[]>(
     "everything-utm:requests",
     [],
@@ -1937,7 +2035,25 @@ export default function App() {
     ...profile,
   });
   const [selectedProfileName, setSelectedProfileName] = useState(profile.name);
+  const [profileEditMode, setProfileEditMode] = useState(false);
   const [reviewDraft, setReviewDraft] = useState({ rating: "5", body: "" });
+  const [adminDraft, setAdminDraft] = useState({ email: "", passcode: "" });
+  const [adminSession, setAdminSession] = useState(false);
+  const [bannedUsers, setBannedUsers] = useLocalStorageState<string[]>(
+    "everything-utm:banned-users",
+    [],
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+  );
+  const [busDocumentDraft, setBusDocumentDraft] = useState({
+    id: "",
+    title: "",
+    sourceName: "",
+    effective: "",
+    appliesTo: "",
+    fileUrl: "",
+    summary: "",
+    notes: "",
+  });
   const [profileCropSource, setProfileCropSource] = useState("");
   const [profileCropZoom, setProfileCropZoom] = useState(1);
   const [profileCropOffsetX, setProfileCropOffsetX] = useState(0);
@@ -1985,8 +2101,12 @@ export default function App() {
     ...settings,
   };
   const canUseApp = isSignedIn;
+  const profileLoading = isSignedIn && remoteProfileRow === undefined;
   const profileSetupRequired =
-    isSignedIn && (remoteProfileRow === undefined || !isProfileSaved(profileData));
+    isSignedIn &&
+    convexAuthenticated &&
+    !profileLoading &&
+    !isProfileSaved(profileData);
   const t = (key: string) =>
     uiText[appSettings.language]?.[key] ?? uiText.en[key] ?? key;
   const search = normalize(query);
@@ -2030,7 +2150,20 @@ export default function App() {
           !!profileData.name.trim() &&
           entityName === profileData.name),
     );
-  const selectedProfile = getProfile(selectedProfileName || profileData.name);
+  const requestedProfile = getProfile(
+    selectedProfileName || profileData.name || `@${profileData.username ?? ""}`,
+  );
+  const viewingOwnProfile =
+    !selectedProfileName ||
+    (!!requestedProfile.name.trim() &&
+      requestedProfile.name === profileData.name) ||
+    (!!requestedProfile.username &&
+      !!profileData.username &&
+      sanitizeUsername(requestedProfile.username) ===
+        sanitizeUsername(profileData.username)) ||
+    (!!requestedProfile.matricNumber &&
+      requestedProfile.matricNumber === profileData.matricNumber);
+  const selectedProfile = viewingOwnProfile ? profileData : requestedProfile;
   const selectedProfileReviews = profileReviews.filter(
     (review) => review.profileName === selectedProfile.name,
   );
@@ -2040,26 +2173,78 @@ export default function App() {
   const selectedProfileQuestions = questions.filter(
     (question) => question.author === selectedProfile.name,
   );
-  const viewingOwnProfile =
-    !selectedProfileName ||
-    (!!selectedProfile.name.trim() &&
-      selectedProfile.name === profileData.name) ||
-    (!!selectedProfile.username &&
-      !!profileData.username &&
-      sanitizeUsername(selectedProfile.username) ===
-        sanitizeUsername(profileData.username)) ||
-    (!!selectedProfile.matricNumber &&
-      selectedProfile.matricNumber === profileData.matricNumber);
   const hasUnsavedProfileChanges = useMemo(
     () => JSON.stringify(profileDraft) !== JSON.stringify(profileData),
     [profileDraft, profileData],
   );
   const shouldGuardProfileDraft =
-    activeModule === "profile" && viewingOwnProfile && hasUnsavedProfileChanges;
+    activeModule === "profile" &&
+    viewingOwnProfile &&
+    profileEditMode &&
+    hasUnsavedProfileChanges;
+  const editingOwnProfile =
+    viewingOwnProfile && (profileEditMode || profileSetupRequired);
+  const adminUnlocked = isOwner || adminSession;
+  const currentUserBanKeys = [
+    currentUserId,
+    profileData.username ? `@${sanitizeUsername(profileData.username)}` : "",
+    profileData.name,
+    currentUserEmail,
+  ].filter(Boolean);
+  const isCurrentUserBanned = bannedUsers.some((value) =>
+    currentUserBanKeys.includes(value),
+  );
+  const familyProfiles = useMemo(() => {
+    const entries = new Map<string, Profile>();
+    const add = (entry: Profile) => {
+      if (!entry.profileSaved) return;
+      const username = sanitizeUsername(entry.username ?? "");
+      const key = username || entry.name.trim();
+      if (key) entries.set(key, entry);
+    };
+    add(profileData);
+    publicProfiles.forEach(add);
+    return Array.from(entries.values()).sort((a, b) =>
+      (a.name || a.username || "").localeCompare(b.name || b.username || ""),
+    );
+  }, [profileData, publicProfiles]);
+  const familyGalleryImages = useMemo(
+    () =>
+      familyProfiles.length
+        ? familyProfiles.map((entry) => ({
+            src: entry.profilePicture || "/everythingutm-icon.png",
+            alt: entry.name || `@${entry.username}`,
+          }))
+        : [{ src: "/everythingutm-icon.png", alt: "EverythingUTM" }],
+    [familyProfiles],
+  );
+  const reelItems = useMemo(
+    () =>
+      [...marketplace]
+        .filter((item) => !item.sold)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 24),
+    [marketplace],
+  );
+  const recentAdminMessages = useMemo(
+    () =>
+      [...messages]
+        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+        .slice(0, 16),
+    [messages],
+  );
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
     setNoticeTone(tone);
     setNotice(message);
+  }
+
+  function ensureUserCanPost() {
+    if (isCurrentUserBanned) {
+      showNotice("This account is banned from posting. Contact the owner if this is a mistake.", "error");
+      return false;
+    }
+    return true;
   }
 
   useEffect(() => {
@@ -2074,6 +2259,7 @@ export default function App() {
       setProfile(emptyProfile());
       setProfileDraft(emptyProfile());
       setSelectedProfileName("");
+      setProfileEditMode(false);
       return;
     }
     if (remoteProfileRow === undefined) {
@@ -2095,7 +2281,10 @@ export default function App() {
         });
     setProfile(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
     setProfileDraft(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
-    setSelectedProfileName(nextProfile.name || `@${nextProfile.username ?? ""}`);
+    setSelectedProfileName(
+      nextProfile.username ? `@${nextProfile.username}` : nextProfile.name,
+    );
+    setProfileEditMode(!isProfileSaved(nextProfile));
   }, [isSignedIn, remoteProfileRow, setProfile, user]);
 
   useEffect(() => {
@@ -2146,6 +2335,7 @@ export default function App() {
     }
     setSelectedProfileName(`@${username}`);
     setProfileDraft({ ...match });
+    setProfileEditMode(false);
     setActiveModuleState("profile");
   }, [isSignedIn, profileDirectory, publicProfileRows]);
 
@@ -2158,11 +2348,15 @@ export default function App() {
     if (lastProfileSetupUserIdRef.current === userId) {
       return;
     }
+    if (remoteProfileRow === undefined) {
+      return;
+    }
     lastProfileSetupUserIdRef.current = userId;
-    setSelectedProfileName(profileData.name);
+    setSelectedProfileName(profileData.username ? `@${profileData.username}` : profileData.name);
     setProfileDraft({ ...profileData });
+    setProfileEditMode(!isProfileSaved(profileData));
     navigateToModule("profile", { skipProfileGuard: true });
-  }, [user?.id]);
+  }, [profileData, remoteProfileRow, user?.id]);
 
   useEffect(() => {
     if (!profileSetupRequired || activeModule === "profile") {
@@ -2170,6 +2364,7 @@ export default function App() {
     }
     setSelectedProfileName(profileData.name);
     setProfileDraft({ ...profileData });
+    setProfileEditMode(true);
     navigateToModule("profile", { skipProfileGuard: true });
     showNotice("Finish and save your profile before using EverythingUTM.", "error");
   }, [activeModule, profileData, profileSetupRequired]);
@@ -2525,9 +2720,9 @@ export default function App() {
     visibleBusRoutes[0] ??
     busScheduleRoutes[0];
   const selectedBusDocument =
-    busScheduleDocuments.find(
+    appBusDocuments.find(
       (document) => document.id === selectedBusRoute.documentId,
-    ) ?? busScheduleDocuments[0];
+    ) ?? appBusDocuments[0] ?? busScheduleDocuments[0];
   const selectedBusStops = useMemo(
     () => uniqueBusStops(selectedBusRoute),
     [selectedBusRoute],
@@ -2702,7 +2897,7 @@ export default function App() {
       }
     });
 
-    busScheduleDocuments.forEach((schedule) => {
+    appBusDocuments.forEach((schedule) => {
       const haystack = [
         schedule.title,
         schedule.sourceName,
@@ -2786,7 +2981,7 @@ export default function App() {
         return aTitleMatch - bTitleMatch;
       })
       .slice(0, 8);
-  }, [marketplace, messages, papers, publicProfiles, questions, requests, search]);
+  }, [appBusDocuments, marketplace, messages, papers, publicProfiles, questions, requests, search]);
 
   function addNotification(
     title: string,
@@ -2916,6 +3111,25 @@ export default function App() {
       showNotice(`Replying to ${message.author}`);
     }
   }
+
+  function handleDashboardNav(item: NavItem) {
+    if (item.key === "profile") {
+      openOwnProfile(activeModule === "profile" || profileSetupRequired);
+      return;
+    }
+    navigateToModule(item.key);
+  }
+
+  const dockItems = navItems.map((item) => {
+    const Icon = item.icon;
+    const itemLabel = localizedNavLabels[appSettings.language][item.key] ?? item.label;
+    return {
+      icon: <Icon size={20} aria-hidden="true" />,
+      label: itemLabel,
+      className: activeModule === item.key ? "is-active" : "",
+      onClick: () => handleDashboardNav(item),
+    };
+  });
 
   function clearActionFocus() {
     setMessageActionId(null);
@@ -3058,19 +3272,21 @@ export default function App() {
     const username = sanitizeUsername(entry.username ?? "");
     setSelectedProfileName(username ? `@${username}` : name);
     setProfileDraft({ ...entry });
+    setProfileEditMode(false);
     navigateToModule("profile", { skipProfileGuard: true });
     if (username) {
       window.history.pushState(null, "", `/${hashForUsername(username)}`);
     }
   }
 
-  function openOwnProfile() {
+  function openOwnProfile(edit = false) {
     if (!confirmDiscardProfileDraft()) {
       return;
     }
     const username = sanitizeUsername(profileData.username ?? "");
     setSelectedProfileName(username ? `@${username}` : profileData.name);
     setProfileDraft({ ...profileData });
+    setProfileEditMode(edit || profileSetupRequired || !isProfileSaved(profileData));
     navigateToModule("profile", { skipProfileGuard: true });
     window.history.pushState(null, "", `/${hashForModule("profile")}`);
   }
@@ -3105,7 +3321,12 @@ export default function App() {
 
   function handleListingSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!listingDraft.title.trim() || !listingDraft.description.trim()) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanTitle = sanitizePlainText(listingDraft.title, 90);
+    const cleanDescription = sanitizeLongText(listingDraft.description, 1200);
+    if (!cleanTitle || !cleanDescription) {
       showNotice("Listing needs a title and description", "error");
       return;
     }
@@ -3116,17 +3337,17 @@ export default function App() {
 
     const item: MarketplaceItem = {
       id: uid("mkt"),
-      title: listingDraft.title.trim(),
-      category: listingDraft.category,
+      title: cleanTitle,
+      category: sanitizePlainText(listingDraft.category, 40) || "Books",
       price: parsePriceInput(listingDraft.price),
       seller: currentDisplayName,
       sellerId: currentUserId,
       sellerAvatar: profileData.profilePicture,
-      location: listingDraft.location.trim() || "UTM Johor Bahru",
+      location: sanitizePlainText(listingDraft.location, 120) || "UTM Johor Bahru",
       fulfillment: listingDraft.fulfillment,
       condition: listingDraft.condition,
       paymentPreference: listingDraft.paymentPreference,
-      description: listingDraft.description.trim(),
+      description: cleanDescription,
       image: listingImages[0],
       images: listingImages,
       tags: compactTags(listingDraft.tags),
@@ -3168,7 +3389,9 @@ export default function App() {
       showNotice("Only the listing author can save changes", "error");
       return;
     }
-    if (!listingEditDraft.title.trim() || !listingEditDraft.description.trim()) {
+    const cleanTitle = sanitizePlainText(listingEditDraft.title, 90);
+    const cleanDescription = sanitizeLongText(listingEditDraft.description, 1200);
+    if (!cleanTitle || !cleanDescription) {
       showNotice("Listing needs a title and description", "error");
       return;
     }
@@ -3177,14 +3400,14 @@ export default function App() {
         item.id === itemId
           ? {
               ...item,
-              title: listingEditDraft.title.trim(),
-              category: listingEditDraft.category,
+              title: cleanTitle,
+              category: sanitizePlainText(listingEditDraft.category, 40) || item.category,
               price: parsePriceInput(listingEditDraft.price),
-              location: listingEditDraft.location.trim() || item.location,
+              location: sanitizePlainText(listingEditDraft.location, 120) || item.location,
               fulfillment: listingEditDraft.fulfillment,
               condition: listingEditDraft.condition,
               paymentPreference: listingEditDraft.paymentPreference,
-              description: listingEditDraft.description.trim(),
+              description: cleanDescription,
               tags: compactTags(listingEditDraft.tags),
               image: listingEditImages[0] ?? item.image,
               images: listingEditImages.length ? listingEditImages : item.images,
@@ -3275,7 +3498,11 @@ export default function App() {
 
   function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!messageDraft.trim() && !messageImage && !messageVoice) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanContent = sanitizeLongText(messageDraft, 1000);
+    if (!cleanContent && !messageImage && !messageVoice) {
       showNotice("Message needs text, a picture, or a voice recording", "error");
       return;
     }
@@ -3285,7 +3512,7 @@ export default function App() {
       author: currentDisplayName,
       authorId: currentUserId,
       authorAvatar: profileData.profilePicture,
-      content: messageDraft.trim(),
+      content: cleanContent,
       image: messageImage || undefined,
       voiceUrl: messageVoice || undefined,
       voiceDuration: messageVoice ? messageVoiceDuration : undefined,
@@ -3371,13 +3598,14 @@ export default function App() {
       showNotice("Only the message author can save changes", "error");
       return;
     }
-    if (!messageEditDraft.trim()) return;
+    const cleanContent = sanitizeLongText(messageEditDraft, 1000);
+    if (!cleanContent) return;
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
           ? {
               ...message,
-              content: messageEditDraft.trim(),
+              content: cleanContent,
               editedAt: new Date().toISOString(),
             }
           : message,
@@ -3402,15 +3630,20 @@ export default function App() {
 
   function handleQuestionSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!questionDraft.title.trim() || !questionDraft.body.trim()) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanTitle = sanitizePlainText(questionDraft.title, 120);
+    const cleanBody = sanitizeLongText(questionDraft.body, 1800);
+    if (!cleanTitle || !cleanBody) {
       showNotice("Question needs a title and details", "error");
       return;
     }
 
     const question: Question = {
       id: uid("q"),
-      title: questionDraft.title.trim(),
-      body: questionDraft.body.trim(),
+      title: cleanTitle,
+      body: cleanBody,
       author: currentDisplayName,
       authorId: currentUserId,
       authorAvatar: profileData.profilePicture,
@@ -3435,7 +3668,10 @@ export default function App() {
       showNotice("This question is resolved and locked", "error");
       return;
     }
-    const body = answerDrafts[questionId]?.trim();
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const body = sanitizeLongText(answerDrafts[questionId] ?? "", 1400);
     if (!body) {
       return;
     }
@@ -3510,7 +3746,9 @@ export default function App() {
       showNotice("Only the question author can save changes", "error");
       return;
     }
-    if (!questionEditDraft.title.trim() || !questionEditDraft.body.trim()) {
+    const cleanTitle = sanitizePlainText(questionEditDraft.title, 120);
+    const cleanBody = sanitizeLongText(questionEditDraft.body, 1800);
+    if (!cleanTitle || !cleanBody) {
       showNotice("Question needs a title and details", "error");
       return;
     }
@@ -3519,8 +3757,8 @@ export default function App() {
         question.id === questionId
           ? {
               ...question,
-              title: questionEditDraft.title.trim(),
-              body: questionEditDraft.body.trim(),
+              title: cleanTitle,
+              body: cleanBody,
               tags: compactTags(questionEditDraft.tags),
               editedAt: new Date().toISOString(),
             }
@@ -3578,7 +3816,12 @@ export default function App() {
 
   function handlePaperUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!paperDraft.code.trim() || !paperDraft.title.trim()) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanCode = sanitizePlainText(paperDraft.code, 18).toUpperCase();
+    const cleanTitle = sanitizePlainText(paperDraft.title, 120);
+    if (!cleanCode || !cleanTitle) {
       showNotice("Paper needs a course code and title", "error");
       return;
     }
@@ -3586,14 +3829,14 @@ export default function App() {
     const finishUpload = (dataUrl?: string) => {
       const paper: PastPaper = {
         id: uid("paper"),
-        code: paperDraft.code.trim().toUpperCase(),
-        title: paperDraft.title.trim(),
+        code: cleanCode,
+        title: cleanTitle,
         faculty: paperDraft.faculty,
         year: paperDraft.year,
         semester: paperDraft.semester,
         type: paperDraft.type,
         uploader: currentDisplayName,
-        fileName: paperFile?.name ?? `${paperDraft.code.trim().toUpperCase()}.txt`,
+        fileName: paperFile?.name ?? `${cleanCode}.txt`,
         fileSize: paperFile
           ? `${(paperFile.size / 1024 / 1024).toFixed(2)} MB`
           : "Text entry",
@@ -3646,6 +3889,177 @@ export default function App() {
       ),
     );
     addNotification("Paper rejected", "A submitted paper was kept hidden.", "papers");
+  }
+
+  function requireAdmin() {
+    if (!adminUnlocked) {
+      showNotice("Admin access is required for this action", "error");
+      return false;
+    }
+    return true;
+  }
+
+  function handleAdminLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanEmail = sanitizePlainText(adminDraft.email, 120).toLowerCase();
+    const expectedPasscode = String(import.meta.env.VITE_ADMIN_PASSCODE || "");
+    if (!expectedPasscode) {
+      showNotice("Admin passcode is not configured. Sign in with the owner account instead.", "error");
+      return;
+    }
+    if (cleanEmail !== ownerEmail || adminDraft.passcode !== expectedPasscode) {
+      showNotice("Admin credentials were not accepted", "error");
+      return;
+    }
+    setAdminSession(true);
+    setAdminDraft({ email: "", passcode: "" });
+    showNotice("Admin gateway unlocked");
+  }
+
+  function adminDeleteMessage(messageId: string) {
+    if (!requireAdmin()) return;
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message) return;
+    if (!window.confirm(`Delete message by ${message.author}?`)) return;
+    setMessages((current) => current.filter((entry) => entry.id !== messageId));
+    showNotice("Message removed by admin");
+  }
+
+  function adminDeleteQuestion(questionId: string) {
+    if (!requireAdmin()) return;
+    const question = questions.find((entry) => entry.id === questionId);
+    if (!question) return;
+    if (!window.confirm(`Delete Q&A post "${question.title}"?`)) return;
+    setQuestions((current) => current.filter((entry) => entry.id !== questionId));
+    showNotice("Q&A post removed by admin");
+  }
+
+  function adminDeleteListing(itemId: string) {
+    if (!requireAdmin()) return;
+    const item = marketplace.find((entry) => entry.id === itemId);
+    if (!item) return;
+    if (!window.confirm(`Delete marketplace listing "${item.title}"?`)) return;
+    setMarketplace((current) => current.filter((entry) => entry.id !== itemId));
+    setFavourites((current) => current.filter((id) => id !== itemId));
+    showNotice("Listing removed by admin");
+  }
+
+  function toggleAdminBan(profileEntry: Profile) {
+    if (!requireAdmin()) return;
+    const username = sanitizeUsername(profileEntry.username ?? "");
+    const key = username ? `@${username}` : profileEntry.name;
+    if (!key) return;
+    setBannedUsers((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key],
+    );
+    showNotice(bannedUsers.includes(key) ? "User unbanned" : "User banned");
+  }
+
+  function clearBusDocumentDraft() {
+    setBusDocumentDraft({
+      id: "",
+      title: "",
+      sourceName: "",
+      effective: "",
+      appliesTo: "",
+      fileUrl: "",
+      summary: "",
+      notes: "",
+    });
+  }
+
+  function editBusDocumentDraft(document: BusScheduleDocument) {
+    setBusDocumentDraft({
+      id: document.id,
+      title: document.title,
+      sourceName: document.sourceName,
+      effective: document.effective,
+      appliesTo: document.appliesTo,
+      fileUrl: document.fileUrl,
+      summary: document.summary,
+      notes: document.notes.join("\n"),
+    });
+  }
+
+  async function updateBusDocumentFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await readFileAsDataUrl(file);
+    setBusDocumentDraft((draft) => ({
+      ...draft,
+      sourceName: file.name,
+      fileUrl: dataUrl,
+    }));
+    event.target.value = "";
+    showNotice("Bus schedule file ready");
+  }
+
+  function saveBusDocument() {
+    if (!requireAdmin()) return;
+    const cleanTitle = sanitizePlainText(busDocumentDraft.title, 120);
+    const cleanSource = sanitizePlainText(busDocumentDraft.sourceName, 140);
+    const cleanEffective = sanitizePlainText(busDocumentDraft.effective, 90);
+    const cleanAppliesTo = sanitizePlainText(busDocumentDraft.appliesTo, 120);
+    const cleanSummary = sanitizeLongText(busDocumentDraft.summary, 600);
+    const cleanFileUrl = busDocumentDraft.fileUrl.trim();
+    if (!cleanTitle || !cleanEffective || !cleanAppliesTo || !cleanFileUrl) {
+      showNotice("Bus document needs title, effective date, applies-to text, and file", "error");
+      return;
+    }
+    const id =
+      busDocumentDraft.id ||
+      `admin-${sanitizeUsername(cleanTitle).replace(/_/g, "-") || uid("bus")}`;
+    const document: BusScheduleDocument = {
+      id,
+      title: cleanTitle,
+      sourceName: cleanSource || "Admin uploaded schedule",
+      effective: cleanEffective,
+      appliesTo: cleanAppliesTo,
+      fileUrl: cleanFileUrl,
+      summary: cleanSummary,
+      notes: busDocumentDraft.notes
+        .split("\n")
+        .map((note) => sanitizePlainText(note, 160))
+        .filter(Boolean),
+    };
+    setAppBusDocuments((current) => {
+      const exists = current.some((entry) => entry.id === id);
+      return exists
+        ? current.map((entry) => (entry.id === id ? document : entry))
+        : [document, ...current];
+    });
+    setSelectedBusDocumentId(id);
+    clearBusDocumentDraft();
+    showNotice("Bus schedule document saved");
+  }
+
+  function deleteBusDocument(documentId: string) {
+    if (!requireAdmin()) return;
+    const document = appBusDocuments.find((entry) => entry.id === documentId);
+    if (!document) return;
+    if (!window.confirm(`Delete bus schedule "${document.title}"?`)) return;
+    setAppBusDocuments((current) =>
+      current.length <= 1
+        ? current
+        : current.filter((entry) => entry.id !== documentId),
+    );
+    if (selectedBusDocumentId === documentId) {
+      const fallback = appBusDocuments.find((entry) => entry.id !== documentId);
+      if (fallback) setSelectedBusDocumentId(fallback.id);
+    }
+    showNotice("Bus schedule document deleted");
+  }
+
+  function adminRejectPaper(paperId: string) {
+    if (!requireAdmin()) return;
+    rejectPaper(paperId);
+  }
+
+  function adminApprovePaper(paperId: string) {
+    if (!requireAdmin()) return;
+    approvePaper(paperId);
   }
 
   function updateRequestType(type: ServiceRequest["type"]) {
@@ -3825,7 +4239,14 @@ export default function App() {
 
   function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!requestDraft.title.trim()) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanTitle = sanitizePlainText(requestDraft.title, 120);
+    const cleanPickup = sanitizePlainText(requestDraft.pickup, 140);
+    const cleanDropoff = sanitizePlainText(requestDraft.dropoff, 140);
+    const cleanNotes = sanitizeLongText(requestDraft.notes, 1200);
+    if (!cleanTitle) {
       showNotice("Request needs a title", "error");
       return;
     }
@@ -3857,15 +4278,15 @@ export default function App() {
     const request: ServiceRequest = {
       id: editingRequestId ?? uid("req"),
       type: requestDraft.type,
-      title: requestDraft.title.trim(),
+      title: cleanTitle,
       requester: existingRequest?.requester ?? currentDisplayName,
       requesterId: existingRequest?.requesterId ?? currentUserId,
       requesterAvatar: existingRequest?.requesterAvatar ?? profileData.profilePicture,
-      pickup: requestDraft.pickup.trim() || "UTM Johor Bahru",
+      pickup: cleanPickup || "UTM Johor Bahru",
       pickupLat: requestDraft.pickupLat ?? undefined,
       pickupLng: requestDraft.pickupLng ?? undefined,
       pickupMapUrl: requestDraft.pickupMapUrl || undefined,
-      dropoff: requestDraft.dropoff.trim() || "UTM Johor Bahru",
+      dropoff: cleanDropoff || "UTM Johor Bahru",
       dropoffLat: requestDraft.dropoffLat ?? undefined,
       dropoffLng: requestDraft.dropoffLng ?? undefined,
       dropoffMapUrl: requestDraft.dropoffMapUrl || undefined,
@@ -3875,7 +4296,7 @@ export default function App() {
       ),
       budget: parseBudgetInput(requestDraft.budget),
       paymentPreference: requestDraft.paymentPreference,
-      notes: requestDraft.notes.trim(),
+      notes: cleanNotes,
       status: existingRequest?.status ?? "Open",
       driver: existingRequest?.driver,
       driverId: existingRequest?.driverId,
@@ -4046,11 +4467,11 @@ export default function App() {
       const maxTop = Math.max(0, image.naturalHeight - cropSide);
       const left = Math.min(
         maxLeft,
-        Math.max(0, maxLeft / 2 + (profileCropOffsetX / 100) * (maxLeft / 2)),
+        Math.max(0, maxLeft / 2 - (profileCropOffsetX / 100) * (maxLeft / 2)),
       );
       const top = Math.min(
         maxTop,
-        Math.max(0, maxTop / 2 + (profileCropOffsetY / 100) * (maxTop / 2)),
+        Math.max(0, maxTop / 2 - (profileCropOffsetY / 100) * (maxTop / 2)),
       );
       const canvas = document.createElement("canvas");
       canvas.width = profileCropSize;
@@ -4086,23 +4507,38 @@ export default function App() {
     }
   }
 
-  async function saveProfile() {
+  async function saveProfile(): Promise<boolean> {
     const nextUsername = sanitizeUsername(
       profileDraft.username || profileDraft.name || user?.username || "",
     );
-    if (!profileDraft.name.trim()) {
+    const cleanName = sanitizeNameInput(profileDraft.name).trim();
+    const cleanAge = sanitizeAgeInput(profileDraft.age);
+    if (!convexAuthenticated) {
+      showNotice("Finishing secure sign-in. Try saving again in a moment.", "error");
+      return false;
+    }
+    if (!cleanName) {
       showNotice("Profile needs your name before saving", "error");
-      return;
+      return false;
+    }
+    if (cleanAge && Number(cleanAge) < 16) {
+      showNotice("Age must be 16 or above", "error");
+      return false;
     }
     if (nextUsername.length < 3) {
       showNotice("Choose a username with at least 3 letters or numbers", "error");
-      return;
+      return false;
     }
     const nextProfile = {
       ...profileDraft,
-      name: profileDraft.name.trim(),
+      name: cleanName,
       username: nextUsername,
       contactNumber: sanitizePhoneInput(profileDraft.contactNumber),
+      matricNumber: sanitizePlainText(profileDraft.matricNumber, 24).toUpperCase(),
+      faculty: sanitizePlainText(profileDraft.faculty, 120),
+      studyYear: sanitizePlainText(profileDraft.studyYear, 40),
+      age: cleanAge,
+      sex: sanitizePlainText(profileDraft.sex, 40),
       profileSaved: true,
     };
     try {
@@ -4115,7 +4551,7 @@ export default function App() {
         error instanceof Error ? error.message : "Profile could not be saved online",
         "error",
       );
-      return;
+      return false;
     }
     setMarketplace((current) =>
       current.map((item) =>
@@ -4200,13 +4636,19 @@ export default function App() {
     setProfile(nextProfile);
     setProfileDraft(nextProfile);
     setSelectedProfileName(`@${nextUsername}`);
+    setProfileEditMode(false);
     showNotice("Profile saved");
     addNotification("Profile saved", "Your student profile was updated.", "profile");
+    return true;
   }
 
   function submitProfileReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!reviewDraft.body.trim()) {
+    if (!ensureUserCanPost()) {
+      return;
+    }
+    const cleanBody = sanitizeLongText(reviewDraft.body, 800);
+    if (!cleanBody) {
       showNotice("Review needs a short comment", "error");
       return;
     }
@@ -4216,7 +4658,7 @@ export default function App() {
       reviewer: currentDisplayName,
       reviewerAvatar: profileData.profilePicture,
       rating: Number(reviewDraft.rating) || 5,
-      body: reviewDraft.body.trim(),
+      body: cleanBody,
       createdAt: new Date().toISOString(),
     };
     setProfileReviews((current) => [review, ...current]);
@@ -4314,7 +4756,8 @@ export default function App() {
   async function submitBugReport() {
     if (bugReportLoading) return;
 
-    if (!bugReportDraft.trim()) {
+    const cleanDetails = sanitizeLongText(bugReportDraft, 2000);
+    if (!cleanDetails) {
       showNotice("Bug report needs details", "error");
       return;
     }
@@ -4338,7 +4781,7 @@ export default function App() {
       const payload = {
         userName: currentDisplayName,
         userEmail: currentUserEmail || "not shared",
-        details: bugReportDraft.trim(),
+        details: cleanDetails,
       };
 
       try {
@@ -4411,21 +4854,7 @@ export default function App() {
   }
 
   if (!authReady) {
-    return (
-      <div className="auth-shell">
-        <section className="auth-card">
-          <div className="brand auth-brand">
-            <div className="brand-mark" aria-hidden="true">
-              <img src="/everythingutm-icon.png" alt="" />
-            </div>
-            <div>
-              <p>EverythingUTM</p>
-              <span>Loading campus hub</span>
-            </div>
-          </div>
-        </section>
-      </div>
-    );
+    return <SkeletonScreen label="Loading secure session" />;
   }
 
   if (!canUseApp) {
@@ -4474,6 +4903,10 @@ export default function App() {
     );
   }
 
+  if (convexAuthLoading || profileLoading) {
+    return <SkeletonScreen label="Loading your EverythingUTM profile" />;
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="EverythingUTM navigation">
@@ -4487,32 +4920,14 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="nav-list">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = activeModule === item.key;
-            const itemLabel =
-              localizedNavLabels[appSettings.language][item.key] ?? item.label;
-            return (
-              <button
-                className={`nav-item ${active ? "is-active" : ""}`}
-                key={item.key}
-                type="button"
-                onClick={() => {
-                  if (item.key === "profile") {
-                    openOwnProfile();
-                    return;
-                  }
-                  navigateToModule(item.key);
-                }}
-                title={itemLabel}
-                aria-current={active ? "page" : undefined}
-              >
-                <Icon size={19} aria-hidden="true" />
-                <span>{itemLabel}</span>
-              </button>
-            );
-          })}
+        <nav className="nav-list dock-nav" aria-label="Dashboard dock">
+          <Dock
+            items={dockItems}
+            panelHeight={66}
+            baseItemSize={48}
+            magnification={64}
+            dockHeight={150}
+          />
         </nav>
       </aside>
 
@@ -4627,7 +5042,7 @@ export default function App() {
             <button
               className="profile-chip"
               type="button"
-              onClick={openOwnProfile}
+              onClick={() => openOwnProfile(false)}
             >
               <PersonAvatar
                 image={profileData.profilePicture}
@@ -7333,7 +7748,7 @@ export default function App() {
                   <CalendarClock size={18} aria-hidden="true" />
                 </div>
                 <div className="filter-row bus-document-tabs">
-                  {busScheduleDocuments.map((document) => (
+                  {appBusDocuments.map((document) => (
                     <button
                       className={`chip ${
                         selectedBusDocumentId === document.id ? "is-active" : ""
@@ -7472,6 +7887,481 @@ export default function App() {
           </section>
         )}
 
+        {activeModule === "family" && (
+          <section className="module family-module">
+            <div className="module-heading">
+              <div>
+                <p className="eyebrow">EverythingUTM community</p>
+                <h1>Our family</h1>
+              </div>
+              <span className="status-pill is-good">
+                <Users size={16} aria-hidden="true" />
+                {familyProfiles.length} registered students
+              </span>
+            </div>
+
+            <section className="panel family-gallery-panel">
+              <Suspense fallback={<span className="skeleton-box skeleton-card" />}>
+                <DomeGallery
+                  images={familyGalleryImages}
+                  fit={0.64}
+                  minRadius={360}
+                  openedImageWidth="320px"
+                  openedImageHeight="320px"
+                  overlayBlurColor="var(--bg)"
+                  grayscale={false}
+                />
+              </Suspense>
+            </section>
+
+            <section className="family-grid">
+              {familyProfiles.length === 0 ? (
+                <EmptyState
+                  icon={Users}
+                  title="No saved profiles yet"
+                  body="New students appear here after they finish profile setup."
+                />
+              ) : (
+                familyProfiles.map((entry) => {
+                  const username = sanitizeUsername(entry.username ?? "");
+                  const banned = bannedUsers.includes(username ? `@${username}` : entry.name);
+                  return (
+                    <button
+                      className={`panel family-card ${banned ? "is-banned" : ""}`}
+                      key={username || entry.name}
+                      type="button"
+                      onClick={() => openProfile(username ? `@${username}` : entry.name)}
+                    >
+                      <PersonAvatar
+                        image={entry.profilePicture}
+                        name={entry.name || username || "UTM"}
+                        size={58}
+                      />
+                      <strong>{entry.name || `@${username}`}</strong>
+                      <span>{username ? `@${username}` : "Username not shared"}</span>
+                      <small>{entry.faculty || "Faculty not shared"}</small>
+                      {banned && <em>Banned</em>}
+                    </button>
+                  );
+                })
+              )}
+            </section>
+          </section>
+        )}
+
+        {activeModule === "reels" && (
+          <section className="module reels-module">
+            <div className="module-heading">
+              <div>
+                <p className="eyebrow">Marketplace discovery</p>
+                <h1>Marketplace Reels</h1>
+              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => navigateToModule("marketplace")}
+              >
+                <Store size={17} aria-hidden="true" />
+                Open marketplace
+              </button>
+            </div>
+
+            {reelItems.length === 0 ? (
+              <EmptyState
+                icon={ShoppingBag}
+                title="No reels yet"
+                body="Marketplace posts with photos will become swipeable reels here."
+              />
+            ) : (
+              <div className="reels-layout">
+                <section className="panel reels-stage">
+                  <div className="reel-stack-shell">
+                    <Suspense fallback={<span className="skeleton-box skeleton-card" />}>
+                      <Stack
+                        randomRotation
+                        sensitivity={150}
+                        cards={reelItems.map((item) => (
+                          <button
+                            className={`reel-card ${item.sold ? "is-sold" : ""}`}
+                            key={item.id}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedListingId(item.id);
+                              navigateToModule("marketplace");
+                            }}
+                          >
+                            <img src={item.images?.[0] ?? item.image} alt="" />
+                            <span>{item.category}</span>
+                            <strong>{item.title}</strong>
+                            <p>{formatListingPrice(item.price)} · {item.condition}</p>
+                          </button>
+                        ))}
+                        autoplay
+                        autoplayDelay={2600}
+                        pauseOnHover
+                        mobileClickOnly
+                      />
+                    </Suspense>
+                  </div>
+                </section>
+                <section className="panel reels-list">
+                  <div className="panel-heading">
+                    <h2>Swipe queue</h2>
+                    <Layers3 size={18} aria-hidden="true" />
+                  </div>
+                  {reelItems.slice(0, 8).map((item) => (
+                    <button
+                      className="favourite-row"
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedListingId(item.id);
+                        navigateToModule("marketplace");
+                      }}
+                    >
+                      <img src={item.images?.[0] ?? item.image} alt="" />
+                      <span>{item.title}</span>
+                      <strong>{formatListingPrice(item.price)}</strong>
+                    </button>
+                  ))}
+                </section>
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeModule === "admin" && (
+          <section className="module admin-module">
+            <div className="module-heading">
+              <div>
+                <p className="eyebrow">Owner controls</p>
+                <h1>Admin gateway</h1>
+              </div>
+              {adminUnlocked && (
+                <span className="status-pill is-good">
+                  <ShieldCheck size={16} aria-hidden="true" />
+                  Admin access active
+                </span>
+              )}
+            </div>
+
+            {!adminUnlocked ? (
+              <section className="admin-login-card">
+                <div className="admin-emblem">
+                  <ShieldAlert size={32} aria-hidden="true" />
+                </div>
+                <div className="admin-login-copy">
+                  <h2>EverythingUTM Admin Login</h2>
+                  <p>Enter owner credentials to access moderation and schedule tools.</p>
+                </div>
+                <form className="stacked-form" onSubmit={handleAdminLogin}>
+                  <label>
+                    <span>Email address</span>
+                    <input
+                      type="email"
+                      value={adminDraft.email}
+                      onChange={(event) =>
+                        setAdminDraft((draft) => ({
+                          ...draft,
+                          email: event.target.value,
+                        }))
+                      }
+                      placeholder={ownerEmail}
+                    />
+                  </label>
+                  <label>
+                    <span>Admin passcode</span>
+                    <input
+                      type="password"
+                      value={adminDraft.passcode}
+                      onChange={(event) =>
+                        setAdminDraft((draft) => ({
+                          ...draft,
+                          passcode: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <button className="primary-button full-width" type="submit">
+                    <ShieldCheck size={17} aria-hidden="true" />
+                    Login to admin panel
+                  </button>
+                  <button
+                    className="ghost-button full-width"
+                    type="button"
+                    onClick={() => navigateToModule("home")}
+                  >
+                    Go back to EverythingUTM
+                  </button>
+                </form>
+              </section>
+            ) : (
+              <div className="admin-grid">
+                <section className="panel admin-panel">
+                  <div className="panel-heading">
+                    <h2>Moderate chats</h2>
+                    <MessagesSquare size={18} aria-hidden="true" />
+                  </div>
+                  <div className="admin-list">
+                    {recentAdminMessages.length === 0 ? (
+                      <p className="muted">No user messages yet.</p>
+                    ) : (
+                      recentAdminMessages.map((message) => (
+                        <article className="admin-row" key={message.id}>
+                          <div>
+                            <strong>{message.author}</strong>
+                            <span>{message.channel} · {formatDate(message.time)}</span>
+                            <p>{message.content || (message.voiceUrl ? "Voice message" : "Attachment")}</p>
+                          </div>
+                          <button
+                            className="secondary-button danger-text mini-button"
+                            type="button"
+                            onClick={() => adminDeleteMessage(message.id)}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                            Delete
+                          </button>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section className="panel admin-panel">
+                  <div className="panel-heading">
+                    <h2>User safety</h2>
+                    <Users size={18} aria-hidden="true" />
+                  </div>
+                  <div className="admin-list">
+                    {familyProfiles.map((entry) => {
+                      const username = sanitizeUsername(entry.username ?? "");
+                      const key = username ? `@${username}` : entry.name;
+                      const banned = bannedUsers.includes(key);
+                      return (
+                        <article className="admin-row" key={key}>
+                          <div>
+                            <strong>{entry.name || key}</strong>
+                            <span>{key} · {entry.faculty || "Faculty not shared"}</span>
+                          </div>
+                          <button
+                            className={`secondary-button mini-button ${banned ? "" : "danger-text"}`}
+                            type="button"
+                            onClick={() => toggleAdminBan(entry)}
+                          >
+                            <ShieldAlert size={14} aria-hidden="true" />
+                            {banned ? "Unban" : "Ban"}
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="panel admin-panel admin-bus-panel">
+                  <div className="panel-heading">
+                    <h2>Bus schedule files</h2>
+                    <CalendarClock size={18} aria-hidden="true" />
+                  </div>
+                  <div className="stacked-form">
+                    <div className="two-col">
+                      <input
+                        value={busDocumentDraft.title}
+                        onChange={(event) =>
+                          setBusDocumentDraft((draft) => ({
+                            ...draft,
+                            title: event.target.value,
+                          }))
+                        }
+                        placeholder="Schedule title"
+                      />
+                      <input
+                        value={busDocumentDraft.effective}
+                        onChange={(event) =>
+                          setBusDocumentDraft((draft) => ({
+                            ...draft,
+                            effective: event.target.value,
+                          }))
+                        }
+                        placeholder="Effective date"
+                      />
+                    </div>
+                    <input
+                      value={busDocumentDraft.appliesTo}
+                      onChange={(event) =>
+                        setBusDocumentDraft((draft) => ({
+                          ...draft,
+                          appliesTo: event.target.value,
+                        }))
+                      }
+                      placeholder="Applies to"
+                    />
+                    <textarea
+                      rows={2}
+                      value={busDocumentDraft.summary}
+                      onChange={(event) =>
+                        setBusDocumentDraft((draft) => ({
+                          ...draft,
+                          summary: event.target.value,
+                        }))
+                      }
+                      placeholder="Short summary"
+                    />
+                    <textarea
+                      rows={3}
+                      value={busDocumentDraft.notes}
+                      onChange={(event) =>
+                        setBusDocumentDraft((draft) => ({
+                          ...draft,
+                          notes: event.target.value,
+                        }))
+                      }
+                      placeholder="Notes, one per line"
+                    />
+                    <label className="file-input">
+                      <Upload size={18} aria-hidden="true" />
+                      <span>{busDocumentDraft.sourceName || "Upload PDF/image file"}</span>
+                      <input
+                        type="file"
+                        accept="application/pdf,image/*"
+                        onChange={updateBusDocumentFile}
+                      />
+                    </label>
+                    <input
+                      value={busDocumentDraft.fileUrl}
+                      onChange={(event) =>
+                        setBusDocumentDraft((draft) => ({
+                          ...draft,
+                          fileUrl: event.target.value,
+                        }))
+                      }
+                      placeholder="Or paste schedule file URL"
+                    />
+                    <div className="card-actions">
+                      <button className="primary-button" type="button" onClick={saveBusDocument}>
+                        <Check size={16} aria-hidden="true" />
+                        Save schedule
+                      </button>
+                      <button className="ghost-button" type="button" onClick={clearBusDocumentDraft}>
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="admin-list">
+                    {appBusDocuments.map((document) => (
+                      <article className="admin-row" key={document.id}>
+                        <div>
+                          <strong>{document.title}</strong>
+                          <span>{document.effective}</span>
+                        </div>
+                        <div className="card-actions compact-actions">
+                          <button
+                            className="secondary-button mini-button"
+                            type="button"
+                            onClick={() => editBusDocumentDraft(document)}
+                          >
+                            <Pencil size={14} aria-hidden="true" />
+                            Edit
+                          </button>
+                          <button
+                            className="secondary-button danger-text mini-button"
+                            type="button"
+                            onClick={() => deleteBusDocument(document.id)}
+                            disabled={appBusDocuments.length <= 1}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="panel admin-panel">
+                  <div className="panel-heading">
+                    <h2>Past paper approvals</h2>
+                    <FolderArchive size={18} aria-hidden="true" />
+                  </div>
+                  <div className="admin-list">
+                    {pendingPapers.length === 0 ? (
+                      <p className="muted">No papers pending review.</p>
+                    ) : (
+                      pendingPapers.map((paper) => (
+                        <article className="admin-row" key={paper.id}>
+                          <div>
+                            <strong>{paper.code}: {paper.title}</strong>
+                            <span>{paper.faculty} · {paper.uploader}</span>
+                          </div>
+                          <div className="card-actions compact-actions">
+                            <button
+                              className="secondary-button mini-button"
+                              type="button"
+                              onClick={() => adminApprovePaper(paper.id)}
+                            >
+                              <Check size={14} aria-hidden="true" />
+                              Approve
+                            </button>
+                            <button
+                              className="secondary-button danger-text mini-button"
+                              type="button"
+                              onClick={() => adminRejectPaper(paper.id)}
+                            >
+                              <X size={14} aria-hidden="true" />
+                              Reject
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section className="panel admin-panel">
+                  <div className="panel-heading">
+                    <h2>Other moderation</h2>
+                    <Flag size={18} aria-hidden="true" />
+                  </div>
+                  <div className="admin-list">
+                    {questions.slice(0, 6).map((question) => (
+                      <article className="admin-row" key={question.id}>
+                        <div>
+                          <strong>{question.title}</strong>
+                          <span>Q&A by {question.author}</span>
+                        </div>
+                        <button
+                          className="secondary-button danger-text mini-button"
+                          type="button"
+                          onClick={() => adminDeleteQuestion(question.id)}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                          Delete
+                        </button>
+                      </article>
+                    ))}
+                    {marketplace.slice(0, 6).map((item) => (
+                      <article className="admin-row" key={item.id}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <span>Listing by {item.seller}</span>
+                        </div>
+                        <button
+                          className="secondary-button danger-text mini-button"
+                          type="button"
+                          onClick={() => adminDeleteListing(item.id)}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                          Delete
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
+          </section>
+        )}
+
         {activeModule === "profile" && (
           <section className="module">
             <div className="module-heading">
@@ -7485,12 +8375,16 @@ export default function App() {
               <section className="panel profile-card-panel">
                 <div className="profile-photo">
                   {(viewingOwnProfile
-                    ? profileDraft.profilePicture
+                    ? editingOwnProfile
+                      ? profileDraft.profilePicture
+                      : profileData.profilePicture
                     : selectedProfile.profilePicture) ? (
                     <img
                       src={
                         viewingOwnProfile
-                          ? profileDraft.profilePicture
+                          ? editingOwnProfile
+                            ? profileDraft.profilePicture
+                            : profileData.profilePicture
                           : selectedProfile.profilePicture
                       }
                       alt=""
@@ -7499,7 +8393,7 @@ export default function App() {
                     <UserCircle size={82} aria-hidden="true" />
                   )}
                 </div>
-                {viewingOwnProfile && (
+                {editingOwnProfile && (
                   <label className="secondary-button profile-upload">
                     <Camera size={17} aria-hidden="true" />
                     Change photo
@@ -7513,17 +8407,23 @@ export default function App() {
                 <div className="profile-card-text">
                   <h2>
                     {viewingOwnProfile
-                      ? profileDraft.name || currentDisplayName
+                      ? editingOwnProfile
+                        ? profileDraft.name || currentDisplayName
+                        : profileData.name || currentDisplayName
                       : selectedProfile.name || "UTM user"}
                   </h2>
                   <p>
                     {viewingOwnProfile
-                      ? profileDraft.matricNumber || "Matric number not set"
+                      ? (editingOwnProfile
+                          ? profileDraft.matricNumber
+                          : profileData.matricNumber) || "Matric number not set"
                       : selectedProfile.matricNumber || "Not shared"}
                   </p>
                   <span>
                     {viewingOwnProfile
-                      ? profileDraft.faculty || "Faculty not set"
+                      ? (editingOwnProfile
+                          ? profileDraft.faculty
+                          : profileData.faculty) || "Faculty not set"
                       : selectedProfile.faculty || "Faculty not shared"}
                   </span>
                   {selectedProfile.role && <small>{selectedProfile.role}</small>}
@@ -7538,12 +8438,202 @@ export default function App() {
                 </div>
               </section>
 
-              {viewingOwnProfile ? (
+              {editingOwnProfile ? (
                 <section className="panel profile-form-panel">
                   <div className="panel-heading">
                     <h2>Student details</h2>
                     <UserCircle size={18} aria-hidden="true" />
                   </div>
+                  {profileSetupRequired ? (
+                    <Stepper
+                      initialStep={1}
+                      backButtonText="Previous"
+                      nextButtonText="Next"
+                      completeButtonText="Save profile"
+                      disableStepIndicators={false}
+                      onFinalStepCompleted={saveProfile}
+                    >
+                      <Step>
+                        <div className="setup-step-copy">
+                          <h3>Campus identity</h3>
+                          <p className="muted">
+                            Choose the name and username other UTM students will see.
+                          </p>
+                        </div>
+                        <label>
+                          <span className="field-label-icon">
+                            <UserCircle size={14} aria-hidden="true" />
+                            Name
+                          </span>
+                          <input
+                            value={profileDraft.name}
+                            onChange={(event) =>
+                              setProfileDraft((current) => ({
+                                ...current,
+                                name: sanitizeNameInput(event.target.value),
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span className="field-label-icon">
+                            <UserRound size={14} aria-hidden="true" />
+                            Username
+                          </span>
+                          <input
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            value={profileDraft.username ?? ""}
+                            onChange={(event) =>
+                              setProfileDraft((current) => ({
+                                ...current,
+                                username: sanitizeUsername(event.target.value),
+                              }))
+                            }
+                            placeholder="e.g. hasan_utm"
+                          />
+                        </label>
+                      </Step>
+                      <Step>
+                        <div className="setup-step-copy">
+                          <h3>Contact and student info</h3>
+                          <p className="muted">
+                            Keep private details minimal and only share what helps others identify you.
+                          </p>
+                        </div>
+                        <div className="two-col">
+                          <label>
+                            <span className="field-label-icon">
+                              <Phone size={14} aria-hidden="true" />
+                              Contact number
+                            </span>
+                            <input
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={profileDraft.contactNumber}
+                              onChange={(event) =>
+                                setProfileDraft((current) => ({
+                                  ...current,
+                                  contactNumber: sanitizePhoneInput(event.target.value),
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span className="field-label-icon">
+                              <IdCard size={14} aria-hidden="true" />
+                              Matric number
+                            </span>
+                            <input
+                              value={profileDraft.matricNumber}
+                              onChange={(event) =>
+                                setProfileDraft((current) => ({
+                                  ...current,
+                                  matricNumber: sanitizePlainText(
+                                    event.target.value,
+                                    24,
+                                  ).toUpperCase(),
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                        <div className="two-col">
+                          <label>
+                            <span className="field-label-icon">
+                              <Cake size={14} aria-hidden="true" />
+                              Age
+                            </span>
+                            <input
+                              min="16"
+                              max="120"
+                              type="number"
+                              value={profileDraft.age}
+                              onChange={(event) =>
+                                setProfileDraft((current) => ({
+                                  ...current,
+                                  age: sanitizeAgeInput(event.target.value),
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span className="field-label-icon">
+                              <Users size={14} aria-hidden="true" />
+                              Sex
+                            </span>
+                            <select
+                              value={profileDraft.sex}
+                              onChange={(event) =>
+                                setProfileDraft((current) => ({
+                                  ...current,
+                                  sex: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">Select sex</option>
+                              <option>Female</option>
+                              <option>Male</option>
+                              <option>Prefer not to say</option>
+                            </select>
+                          </label>
+                        </div>
+                      </Step>
+                      <Step>
+                        <div className="setup-step-copy">
+                          <h3>Academic details</h3>
+                          <p className="muted">
+                            Save once you are ready. Everything else unlocks after this.
+                          </p>
+                        </div>
+                        <label>
+                          <span className="field-label-icon">
+                            <Building2 size={14} aria-hidden="true" />
+                            Faculty
+                          </span>
+                          <select
+                            value={profileDraft.faculty}
+                            onChange={(event) =>
+                              setProfileDraft((current) => ({
+                                ...current,
+                                faculty: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Select faculty</option>
+                            {faculties
+                              .filter((faculty) => faculty !== "All")
+                              .map((faculty) => (
+                                <option key={faculty}>{faculty}</option>
+                              ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span className="field-label-icon">
+                            <GraduationCap size={14} aria-hidden="true" />
+                            Study year
+                          </span>
+                          <select
+                            value={profileDraft.studyYear}
+                            onChange={(event) =>
+                              setProfileDraft((current) => ({
+                                ...current,
+                                studyYear: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Select study year</option>
+                            <option>Foundation</option>
+                            <option>Year 1</option>
+                            <option>Year 2</option>
+                            <option>Year 3</option>
+                            <option>Year 4</option>
+                            <option>Postgraduate</option>
+                          </select>
+                        </label>
+                      </Step>
+                    </Stepper>
+                  ) : (
                   <div className="stacked-form">
                     <div className="two-col">
                       <label>
@@ -7556,7 +8646,7 @@ export default function App() {
                           onChange={(event) =>
                             setProfileDraft((current) => ({
                               ...current,
-                              name: event.target.value,
+                              name: sanitizeNameInput(event.target.value),
                             }))
                           }
                         />
@@ -7667,12 +8757,13 @@ export default function App() {
                         </span>
                         <input
                           min="16"
+                          max="120"
                           type="number"
                           value={profileDraft.age}
                           onChange={(event) =>
                             setProfileDraft((current) => ({
                               ...current,
-                              age: event.target.value,
+                              age: sanitizeAgeInput(event.target.value),
                             }))
                           }
                         />
@@ -7707,12 +8798,24 @@ export default function App() {
                       {t("saveProfile")}
                     </button>
                   </div>
+                  )}
                 </section>
               ) : (
                 <section className="panel profile-form-panel">
                   <div className="panel-heading">
                     <h2>Public profile</h2>
-                    <UserRound size={18} aria-hidden="true" />
+                    {viewingOwnProfile ? (
+                      <button
+                        className="secondary-button mini-button"
+                        type="button"
+                        onClick={() => setProfileEditMode(true)}
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                        Edit profile
+                      </button>
+                    ) : (
+                      <UserRound size={18} aria-hidden="true" />
+                    )}
                   </div>
                   <div className="profile-detail-list">
                     <span>

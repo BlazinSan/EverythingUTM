@@ -1,0 +1,142 @@
+.rb-stepper-outer {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.rb-stepper-shell {
+  width: 100%;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.rb-stepper-indicator-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 18px 20px 10px;
+}
+
+.rb-stepper-indicator-group {
+  display: contents;
+}
+
+.rb-stepper-content {
+  position: relative;
+  overflow: hidden;
+}
+
+.rb-stepper-step {
+  display: grid;
+  gap: 16px;
+  padding: 12px 20px 4px;
+}
+
+.rb-stepper-footer {
+  padding: 14px 20px 20px;
+}
+
+.rb-stepper-nav {
+  display: flex;
+  gap: 10px;
+}
+
+.rb-stepper-nav.spread {
+  justify-content: space-between;
+}
+
+.rb-stepper-nav.end {
+  justify-content: flex-end;
+}
+
+.rb-stepper-back,
+.rb-stepper-next {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.rb-stepper-back {
+  color: var(--text);
+  background: var(--surface-strong);
+}
+
+.rb-stepper-next {
+  color: #fff;
+  background: var(--utm-red);
+  border-color: var(--utm-red);
+}
+
+.rb-stepper-back:hover,
+.rb-stepper-next:hover {
+  transform: translateY(-1px);
+}
+
+.rb-stepper-next:disabled,
+.rb-stepper-back:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.rb-stepper-indicator {
+  position: relative;
+  cursor: pointer;
+  outline: none;
+}
+
+.rb-stepper-indicator-inner {
+  display: flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+.rb-stepper-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.rb-stepper-number {
+  font-size: 0.875rem;
+}
+
+.rb-stepper-connector {
+  position: relative;
+  flex: 1;
+  height: 0.125rem;
+  margin: 0 0.5rem;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.rb-stepper-connector-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+}
+
+.rb-stepper-check {
+  width: 1rem;
+  height: 1rem;
+  color: #fff;
+}

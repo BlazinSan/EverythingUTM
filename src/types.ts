@@ -15,7 +15,10 @@ export type ModuleKey =
   | "papers"
   | "requests"
   | "bus"
+  | "family"
+  | "reels"
   | "profile"
+  | "admin"
   | "settings"
   | "notifications";
 

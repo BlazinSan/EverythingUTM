@@ -1,0 +1,87 @@
+.rb-dock-outer {
+  position: relative;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.rb-dock-panel {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  width: max-content;
+  max-width: min(100%, 980px);
+  align-items: flex-end;
+  gap: 0.55rem;
+  padding: 0.45rem;
+  overflow-x: auto;
+  pointer-events: all;
+  background:
+    linear-gradient(135deg, rgba(157, 34, 53, 0.24), transparent 45%),
+    rgba(18, 15, 23, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+  scrollbar-width: none;
+}
+
+.rb-dock-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.rb-dock-item {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  outline: none;
+}
+
+.rb-dock-item.is-active {
+  color: #fff;
+  background: var(--utm-red);
+  border-color: var(--utm-red);
+}
+
+.rb-dock-item:focus-visible {
+  outline: 2px solid var(--utm-teal);
+  outline-offset: 3px;
+}
+
+.rb-dock-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rb-dock-label {
+  position: absolute;
+  top: -1.75rem;
+  left: 50%;
+  width: max-content;
+  max-width: 160px;
+  padding: 0.2rem 0.55rem;
+  color: #fff;
+  white-space: nowrap;
+  background: #120f17;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  transform: translateX(-50%);
+}
