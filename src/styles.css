@@ -166,6 +166,16 @@ body {
   border-color: #fff;
 }
 
+.auth-action-stack,
+.account-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.account-actions .cl-userButton-root {
+  justify-self: start;
+}
+
 button,
 input,
 select,
@@ -1412,6 +1422,46 @@ textarea:focus {
   color: rgba(255, 255, 255, 0.72);
 }
 
+.reply-preview {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  text-align: left;
+  background: rgba(0, 133, 111, 0.08);
+  border: 0;
+  border-left: 3px solid var(--utm-teal);
+  border-radius: 10px;
+}
+
+.message-bubble.is-mine .reply-preview {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border-left-color: rgba(255, 255, 255, 0.72);
+}
+
+.reply-preview span,
+.reply-composer span {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--utm-teal);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.message-bubble.is-mine .reply-preview span {
+  color: #fff;
+}
+
+.reply-preview p,
+.reply-composer p {
+  margin: 0;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .chat-composer {
   position: sticky;
   bottom: 0;
@@ -1424,6 +1474,19 @@ textarea:focus {
   background: var(--surface);
   border-top: 1px solid var(--line);
   box-shadow: 0 -14px 34px rgba(34, 32, 39, 0.08);
+}
+
+.reply-composer {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: rgba(0, 133, 111, 0.08);
+  border: 1px solid rgba(0, 133, 111, 0.2);
+  border-left: 4px solid var(--utm-teal);
+  border-radius: 12px;
 }
 
 .voice-button.is-recording {
@@ -2993,6 +3056,8 @@ textarea:focus {
 }
 
 :root[data-theme="dark"] .message-actions button,
+:root[data-theme="dark"] .reply-preview,
+:root[data-theme="dark"] .reply-composer,
 :root[data-theme="dark"] .translation-box {
   color: var(--text) !important;
   background: var(--surface);

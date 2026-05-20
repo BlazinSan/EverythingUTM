@@ -2,6 +2,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
   useState,
@@ -16,6 +17,16 @@ import {
   useMap,
   useMapEvents,
 } from "react-leaflet";
+import {
+  SignInButton,
+  SignUpButton,
+  UserButton,
+  useAuth,
+  useClerk,
+  useUser,
+} from "@clerk/clerk-react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { api } from "../convex/_generated/api";
 import {
   ArrowUpDown,
   BadgeCheck,
@@ -90,14 +101,7 @@ import {
   marketplaceFilters,
   marketplaceCategories,
 } from "./data";
-import {
-  isSupabaseConfigured,
-  loadSupabaseState,
-  saveSupabaseState,
-  supabase,
-  supabaseNamespace,
-} from "./lib/supabase";
-import type { RealtimeChannel, Session } from "@supabase/supabase-js";
+import { isConvexConfigured } from "./lib/convex";
 import type {
   AppSettings,
   CampusLocation,
@@ -196,8 +200,6 @@ const requestSortOptions = [
   "Price: low to high",
   "Price: high to low",
 ] as const;
-
-type AuthAction = "signin" | "signup" | "google" | "reset" | "password" | null;
 
 const moduleSlugs: Record<ModuleKey, string> = {
   home: "home",
@@ -768,35 +770,6 @@ function hashForModule(module: ModuleKey) {
   return `#${moduleSlugs[module]}`;
 }
 
-type AuthReturnTarget = "profile" | "reset-password";
-
-const AUTH_NEXT_STORAGE_KEY = "everything-utm:auth-next";
-
-function readStoredAuthTarget(): AuthReturnTarget | null {
-  try {
-    const value = window.localStorage.getItem(AUTH_NEXT_STORAGE_KEY);
-    return value === "profile" || value === "reset-password" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeAuthTarget(target: AuthReturnTarget) {
-  try {
-    window.localStorage.setItem(AUTH_NEXT_STORAGE_KEY, target);
-  } catch {
-    // Authentication still works without local storage; the redirect just lands on home.
-  }
-}
-
-function clearStoredAuthTarget() {
-  try {
-    window.localStorage.removeItem(AUTH_NEXT_STORAGE_KEY);
-  } catch {
-    // Ignore private browsing/local storage failures.
-  }
-}
-
 function clearEverythingUtmStorage() {
   try {
     Object.keys(window.localStorage)
@@ -807,7 +780,7 @@ function clearEverythingUtmStorage() {
   }
 }
 
-function isSupabaseAuthHash(hash = window.location.hash) {
+function isAuthCallbackHash(hash = window.location.hash) {
   const value = hash.replace(/^#/, "");
   return (
     value.includes("access_token=") ||
@@ -816,32 +789,6 @@ function isSupabaseAuthHash(hash = window.location.hash) {
     value.includes("type=recovery") ||
     value.includes("error=")
   );
-}
-
-function authReturnTarget(): AuthReturnTarget | null {
-  const storedTarget = readStoredAuthTarget();
-  if (storedTarget) {
-    return storedTarget;
-  }
-  const params = new URLSearchParams(window.location.search);
-  const next = params.get("next");
-  if (next === "profile") {
-    return "profile";
-  }
-  if (next === "reset-password") {
-    return "reset-password";
-  }
-  if (
-    params.get("type") === "recovery" ||
-    window.location.hash.includes("reset-password") ||
-    window.location.hash.includes("type=recovery")
-  ) {
-    return "reset-password";
-  }
-  if (params.has("code") || params.get("auth") === "callback" || isSupabaseAuthHash()) {
-    return "profile";
-  }
-  return null;
 }
 
 function hasAllowedSearchParams() {
@@ -853,10 +800,13 @@ function hasAllowedSearchParams() {
     "error_description",
     "listing",
     "next",
+    "redirect_url",
+    "strategy",
+    "ticket",
     "type",
   ]);
   return Array.from(new URLSearchParams(window.location.search).keys()).every(
-    (key) => allowed.has(key),
+    (key) => allowed.has(key) || key.startsWith("__clerk_"),
   );
 }
 
@@ -864,7 +814,7 @@ function isKnownHash(hash = window.location.hash) {
   if (!hash) {
     return true;
   }
-  if (isSupabaseAuthHash(hash) || hash.includes("reset-password")) {
+  if (isAuthCallbackHash(hash) || hash.includes("reset-password") || usernameFromHash(hash)) {
     return true;
   }
   return Boolean(moduleFromHash(hash));
@@ -878,6 +828,23 @@ function isInvalidAppRoute() {
 
 function sanitizePhoneInput(value: string) {
   return value.replace(/\D/g, "").slice(0, 16);
+}
+
+function sanitizeUsername(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+}
+
+function usernameFromHash(hash = window.location.hash) {
+  const match = hash.match(/^#\/?user\/([a-z0-9_]{3,24})$/i);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function hashForUsername(username: string) {
+  return `#user/${sanitizeUsername(username)}`;
 }
 
 function consumeRateLimit(key: string, maxHits: number, windowMs: number) {
@@ -1175,6 +1142,9 @@ function normalizeBusStop(stop: string) {
   if (normalized.includes("fkt") || normalized.includes("n29")) return "fkt";
   if (normalized.includes("fke") || normalized.includes("p19")) return "fke";
   if (normalized.includes("v01")) return "v01";
+  if (normalized.includes("jalan amal") || normalized.includes("jln amal")) {
+    return "jalanamal";
+  }
   if (normalized.includes("stadium")) return "stadium";
   return normalized;
 }
@@ -1221,7 +1191,14 @@ function busTimesForRoute(
   now = new Date(),
 ) {
   const stopKey = stop ? normalizeBusStop(stop) : "";
-  const exactTimes = route.id ? busStopTimeOverrides[route.id]?.[stopKey] : undefined;
+  const exactTimes = route.id
+    ? busStopTimeOverrides[route.id]?.[stopKey] ??
+      (stopKey === "jalanamal" && busStopTimeOverrides[route.id]?.cp
+        ? busStopTimeOverrides[route.id]?.cp.map((time) =>
+            addMinutesToTime(time, 5),
+          )
+        : undefined)
+    : undefined;
   const baseTimes = (() => {
     if (exactTimes) {
       return exactTimes;
@@ -1393,8 +1370,12 @@ function emptyProfile(overrides: Partial<Profile> = {}): Profile {
   return { ...appUser, ...overrides };
 }
 
-function profileStorageKey(userId: string) {
-  return `everything-utm:user-profile:${userId}`;
+function isProfileSaved(profile: Profile) {
+  return Boolean(
+    profile.profileSaved &&
+      profile.name.trim() &&
+      sanitizeUsername(profile.username ?? "").length >= 3,
+  );
 }
 
 function isDemoName(value?: string) {
@@ -1560,80 +1541,23 @@ function withTimeout<T>(
   });
 }
 
-type AppStateRealtimeCallback = (data: unknown) => void;
-const appStateRealtimeSubscribers = new Map<
-  string,
-  Set<AppStateRealtimeCallback>
->();
-let appStateRealtimeChannel: RealtimeChannel | null = null;
-
-function ensureAppStateRealtimeChannel() {
-  if (!supabase || appStateRealtimeChannel) {
-    return;
-  }
-
-  appStateRealtimeChannel = supabase
-    .channel("everythingutm-app-state")
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "app_state",
-        filter: `namespace=eq.${supabaseNamespace}`,
-      },
-      (payload) => {
-        const row = payload.new as
-          | { storage_key?: string; data?: unknown }
-          | Record<string, never>;
-        if (!row.storage_key || typeof row.data === "undefined") {
-          return;
-        }
-        appStateRealtimeSubscribers
-          .get(row.storage_key)
-          ?.forEach((callback) => callback(row.data));
-      },
-    )
-    .subscribe();
-}
-
-function subscribeAppStateKey<T>(
-  key: string,
-  callback: (data: T) => void,
-) {
-  if (!supabase) {
-    return () => undefined;
-  }
-  const supabaseClient = supabase;
-  let subscribers = appStateRealtimeSubscribers.get(key);
-  if (!subscribers) {
-    subscribers = new Set();
-    appStateRealtimeSubscribers.set(key, subscribers);
-  }
-  const wrappedCallback = callback as AppStateRealtimeCallback;
-  subscribers.add(wrappedCallback);
-  ensureAppStateRealtimeChannel();
-
-  return () => {
-    subscribers?.delete(wrappedCallback);
-    if (subscribers?.size === 0) {
-      appStateRealtimeSubscribers.delete(key);
-    }
-    if (appStateRealtimeSubscribers.size === 0 && appStateRealtimeChannel) {
-      supabaseClient.removeChannel(appStateRealtimeChannel);
-      appStateRealtimeChannel = null;
-    }
-  };
+function toConvexJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function useLocalStorageState<T>(
   key: string,
   initialValue: T,
-  options: { syncOnline?: boolean; reloadKey?: unknown; pollMs?: number } = {},
+  options: { syncOnline?: boolean; reloadKey?: unknown } = {},
 ) {
   const syncOnline = options.syncOnline ?? false;
-  const [supabaseLoaded, setSupabaseLoaded] = useState(
-    !syncOnline || !isSupabaseConfigured,
+  const onlineState = useQuery(
+    api.appState.get,
+    syncOnline && isConvexConfigured ? { storageKey: key } : "skip",
+  ) as T | null | undefined;
+  const upsertOnlineState = useMutation(api.appState.upsert);
+  const [convexLoaded, setConvexLoaded] = useState(
+    !syncOnline || !isConvexConfigured,
   );
   const [state, setState] = useState<T>(() => {
     try {
@@ -1650,86 +1574,40 @@ function useLocalStorageState<T>(
   }, [state]);
 
   useEffect(() => {
-    if (!syncOnline || !isSupabaseConfigured) {
-      setSupabaseLoaded(true);
+    if (!syncOnline || !isConvexConfigured) {
+      setConvexLoaded(true);
+      return;
+    }
+    if (onlineState === undefined) {
+      setConvexLoaded(false);
       return;
     }
 
-    let cancelled = false;
-    setSupabaseLoaded(false);
-    loadSupabaseState<T>(key)
-      .then((stored) => {
-        if (cancelled) {
-          return;
-        }
-        const localState = sanitizeStoredState(key, stateRef.current);
-        if (stored !== null) {
-          const onlineState = sanitizeStoredState(key, stored);
-          const mergedState = mergeOnlineAndLocalState(
-            key,
-            onlineState,
-            localState,
-          );
-          setState(mergedState);
-          if (!sameStoredState(mergedState, onlineState)) {
-            saveSupabaseState(key, mergedState).catch(() => undefined);
-          }
-        } else {
-          saveSupabaseState(key, localState).catch(() => undefined);
-        }
-        setSupabaseLoaded(true);
-      })
-      .catch(() => setSupabaseLoaded(true));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [key, options.reloadKey, syncOnline]);
-
-  useEffect(() => {
-    if (!syncOnline || !isSupabaseConfigured || !supabaseLoaded) {
-      return;
-    }
-
-    let cancelled = false;
-    const refreshOnlineState = async () => {
-      const stored = await loadSupabaseState<T>(key).catch(() => null);
-      if (cancelled || stored === null) {
-        return;
-      }
-      setState((current) =>
-        mergeOnlineAndLocalState(key, stored, sanitizeStoredState(key, current)),
+    const localState = sanitizeStoredState(key, stateRef.current);
+    if (onlineState !== null) {
+      const cleanOnlineState = sanitizeStoredState(key, onlineState);
+      const mergedState = mergeOnlineAndLocalState(
+        key,
+        cleanOnlineState,
+        localState,
       );
-    };
-
-    window.addEventListener("focus", refreshOnlineState);
-    const pollMs = options.pollMs ?? 60_000;
-    const timer =
-      pollMs > 0 ? window.setInterval(refreshOnlineState, pollMs) : 0;
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", refreshOnlineState);
-      if (timer) {
-        window.clearInterval(timer);
+      if (!sameStoredState(mergedState, stateRef.current)) {
+        setState(mergedState);
       }
-    };
-  }, [key, options.pollMs, options.reloadKey, supabaseLoaded, syncOnline]);
-
-  useEffect(() => {
-    if (!syncOnline || !isSupabaseConfigured || !supabaseLoaded || !supabase) {
-      return;
+      if (!sameStoredState(mergedState, cleanOnlineState)) {
+        upsertOnlineState({
+          storageKey: key,
+          data: toConvexJson(sanitizeStoredState(key, mergedState)),
+        }).catch(() => undefined);
+      }
+    } else {
+      upsertOnlineState({
+        storageKey: key,
+        data: toConvexJson(localState),
+      }).catch(() => undefined);
     }
-
-    return subscribeAppStateKey<T>(key, (data) => {
-      setState((current) =>
-        mergeOnlineAndLocalState(
-          key,
-          data,
-          sanitizeStoredState(key, current),
-        ),
-      );
-    });
-  }, [key, options.reloadKey, supabaseLoaded, syncOnline]);
+    setConvexLoaded(true);
+  }, [key, onlineState, options.reloadKey, syncOnline, upsertOnlineState]);
 
   useEffect(() => {
     const cleanState = sanitizeStoredState(key, state);
@@ -1739,12 +1617,15 @@ function useLocalStorageState<T>(
       // Local storage can fail in private windows or if file uploads are very large.
     }
 
-    if (syncOnline && supabaseLoaded) {
-      saveSupabaseState(key, cleanState).catch(() => {
-        // Keep the app usable offline or before Supabase policies are configured.
+    if (syncOnline && convexLoaded) {
+      upsertOnlineState({
+        storageKey: key,
+        data: toConvexJson(cleanState),
+      }).catch(() => {
+        // Keep the app usable offline or before Convex auth is configured.
       });
     }
-  }, [key, state, supabaseLoaded, syncOnline]);
+  }, [key, state, convexLoaded, syncOnline, upsertOnlineState]);
 
   return [state, setState] as const;
 }
@@ -1879,16 +1760,22 @@ function RequestPinPicker({
 }
 
 export default function App() {
+  const { isLoaded: authReady, isSignedIn: clerkSignedIn } = useAuth();
+  const { user } = useUser();
+  const clerk = useClerk();
+  const isSignedIn = Boolean(authReady && clerkSignedIn && user);
+  const currentUserEmail =
+    user?.primaryEmailAddress?.emailAddress ??
+    user?.emailAddresses?.[0]?.emailAddress ??
+    "";
   const [activeModule, setActiveModuleState] = useState<ModuleKey>(
     () => moduleFromHash() ?? "home",
   );
   const [pageDirection, setPageDirection] = useState<"forward" | "back">(
     "forward",
   );
-  const [authSession, setAuthSession] = useState<Session | null>(null);
   const [routeNotFound, setRouteNotFound] = useState(() => isInvalidAppRoute());
-  const [authReady, setAuthReady] = useState(() => !isSupabaseConfigured);
-  const [guestMode, setGuestMode] = useLocalStorageState(
+  const [, setGuestMode] = useLocalStorageState(
     "everything-utm:guest-mode",
     false,
   );
@@ -1896,22 +1783,8 @@ export default function App() {
     "everything-utm:local-identity",
     uid("local"),
   );
-  const shouldSyncOnline = Boolean(authSession);
-  const onlineReloadKey = authSession?.user.id ?? "signed-out";
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
-  const [authForm, setAuthForm] = useState({
-    email: "",
-    password: "",
-    name: "",
-    sex: "Prefer not to say",
-  });
-  const [authAction, setAuthAction] = useState<AuthAction>(null);
-  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
-  const [passwordForm, setPasswordForm] = useState({
-    password: "",
-    confirmPassword: "",
-  });
-  const [resetEmailSentAt, setResetEmailSentAt] = useState(0);
+  const shouldSyncOnline = isSignedIn;
+  const onlineReloadKey = user?.id ?? "signed-out";
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [profile, setProfile] = useLocalStorageState<Profile>(
@@ -1928,14 +1801,13 @@ export default function App() {
   const [profileReviews, setProfileReviews] = useLocalStorageState<
     ProfileReview[]
   >("everything-utm:profile-reviews", [], {
-    pollMs: 0,
     reloadKey: onlineReloadKey,
     syncOnline: shouldSyncOnline,
   });
   const [marketplace, setMarketplace] = useLocalStorageState<MarketplaceItem[]>(
     "everything-utm:marketplace",
     [],
-    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [favourites, setFavourites] = useLocalStorageState<string[]>(
     "everything-utm:favourites",
@@ -1944,23 +1816,50 @@ export default function App() {
   const [messages, setMessages] = useLocalStorageState<ChatMessage[]>(
     "everything-utm:messages",
     [],
-    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [questions, setQuestions] = useLocalStorageState<Question[]>(
     "everything-utm:questions",
     [],
-    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [papers, setPapers] = useLocalStorageState<PastPaper[]>(
     "everything-utm:papers",
     [],
-    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [requests, setRequests] = useLocalStorageState<ServiceRequest[]>(
     "everything-utm:requests",
     [],
-    { pollMs: 0, reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
+  const remoteProfileRow = useQuery(
+    api.profiles.getCurrent,
+    isSignedIn ? {} : "skip",
+  ) as
+    | {
+        profile?: Partial<Profile> | null;
+        username?: string;
+        saved?: boolean;
+      }
+    | null
+    | undefined;
+  const publicProfileRows = useQuery(
+    api.profiles.listPublic,
+    isSignedIn ? {} : "skip",
+  ) as
+    | Array<{
+        profile?: Partial<Profile> | null;
+        username?: string;
+        name?: string;
+        saved?: boolean;
+      }>
+    | undefined;
+  const upsertCurrentProfile = useMutation(api.profiles.upsertCurrent);
+  const deleteCurrentProfileData = useMutation(api.profiles.deleteCurrentData);
+  const createBugReport = useMutation(api.bugReports.create);
+  const sendBugReportEmail = useAction(api.bugReports.sendEmail);
+  const deleteCurrentClerkUser = useAction(api.accounts.deleteCurrentClerkUser);
 
   const [marketCategory, setMarketCategory] = useState("All");
   const [marketSort, setMarketSort] =
@@ -1978,6 +1877,8 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [activeChannel, setActiveChannel] = useState(chatChannels[0]);
   const [messageDraft, setMessageDraft] = useState("");
+  const [replyingToMessage, setReplyingToMessage] =
+    useState<ChatMessage | null>(null);
   const [messageImage, setMessageImage] = useState("");
   const [messageVoice, setMessageVoice] = useState("");
   const [messageVoiceDuration, setMessageVoiceDuration] = useState(0);
@@ -2056,35 +1957,63 @@ export default function App() {
   const voiceChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const lastProfileSetupUserIdRef = useRef<string | null>(null);
+  const messageSwipeRef = useRef<{ id: string; x: number; y: number } | null>(
+    null,
+  );
   const requestFormRef = useRef<HTMLElement | null>(null);
 
   const profileData: Profile = { ...appUser, ...profile };
-  const currentUserId = authSession?.user.id ?? localIdentity;
+  const publicProfiles = useMemo(
+    () =>
+      (publicProfileRows ?? [])
+        .map((row) =>
+          emptyProfile({
+            ...(row.profile ?? {}),
+            name: row.profile?.name || row.name || "",
+            username: row.username || row.profile?.username || "",
+            profileSaved: row.saved ?? row.profile?.profileSaved ?? true,
+          }),
+        )
+        .filter((entry) => entry.profileSaved && entry.username),
+    [publicProfileRows],
+  );
+  const currentUserId = user?.id ?? localIdentity;
   const currentDisplayName =
-    profileData.name.trim() || "New UTM user";
+    profileData.name.trim() || user?.fullName || user?.firstName || "New UTM user";
   const appSettings: AppSettings = {
     ...defaultSettings,
     ...settings,
   };
-  const isSignedIn = Boolean(authSession);
-  const authBusy = authAction !== null;
-  const canUseApp = isSignedIn || !isSupabaseConfigured;
+  const canUseApp = isSignedIn;
+  const profileSetupRequired =
+    isSignedIn && (remoteProfileRow === undefined || !isProfileSaved(profileData));
   const t = (key: string) =>
     uiText[appSettings.language]?.[key] ?? uiText.en[key] ?? key;
   const search = normalize(query);
   const unreadCount = notifications.filter((item) => !item.read).length;
   const isOwner = Boolean(
-    (ownerEmail && authSession?.user.email?.toLowerCase() === ownerEmail) ||
+    (ownerEmail && currentUserEmail.toLowerCase() === ownerEmail) ||
       (ownerMatricNumber && profileData.matricNumber === ownerMatricNumber),
   );
   const activeModuleIndex = navItems.findIndex((item) => item.key === activeModule);
   const profileDirectory = useMemo(() => {
     const directory = new Map<string, Profile>();
-    if (profileData.name.trim()) {
-      directory.set(profileData.name, profileData);
+    const addProfile = (entry: Profile) => {
+      if (entry.name.trim()) {
+        directory.set(entry.name, entry);
+      }
+      const username = sanitizeUsername(entry.username ?? "");
+      if (username) {
+        directory.set(username, entry);
+        directory.set(`@${username}`, entry);
+      }
+    };
+    if (profileData.name.trim() || profileData.username) {
+      addProfile(profileData);
     }
+    publicProfiles.forEach(addProfile);
     return directory;
-  }, [profileData]);
+  }, [profileData, publicProfiles]);
   const getProfile = (name: string) =>
     profileDirectory.get(name) ?? {
       ...appUser,
@@ -2115,6 +2044,10 @@ export default function App() {
     !selectedProfileName ||
     (!!selectedProfile.name.trim() &&
       selectedProfile.name === profileData.name) ||
+    (!!selectedProfile.username &&
+      !!profileData.username &&
+      sanitizeUsername(selectedProfile.username) ===
+        sanitizeUsername(profileData.username)) ||
     (!!selectedProfile.matricNumber &&
       selectedProfile.matricNumber === profileData.matricNumber);
   const hasUnsavedProfileChanges = useMemo(
@@ -2137,189 +2070,33 @@ export default function App() {
   }, [appSettings.language, appSettings.theme]);
 
   useEffect(() => {
-    if (!supabase) {
-      setAuthReady(true);
+    if (!isSignedIn) {
+      setProfile(emptyProfile());
+      setProfileDraft(emptyProfile());
+      setSelectedProfileName("");
       return;
     }
-    const supabaseClient = supabase;
-    let mounted = true;
-    let validationRun = 0;
-
-    const openProfileAfterAuth = () => {
-      clearStoredAuthTarget();
-      setPasswordRecoveryMode(false);
-      setRouteNotFound(false);
-      setActiveModuleState("profile");
-      setPageDirection("forward");
-      window.history.replaceState(null, "", `/${hashForModule("profile")}`);
-    };
-
-    const verifySession = async (session: Session | null) => {
-      if (!session) {
-        return null;
-      }
-      const { data, error } = await withTimeout(
-        supabaseClient.auth.getUser(session.access_token),
-        6_000,
-        "Session verification timed out. Please sign in again.",
-      );
-      if (error || !data.user) {
-        await supabaseClient.auth.signOut().catch(() => undefined);
-        return null;
-      }
-      return { ...session, user: data.user };
-    };
-
-    const commitSession = (
-      session: Session | null,
-      target: AuthReturnTarget | null,
-      event: string,
-    ) => {
-      const run = ++validationRun;
-      if (!session) {
-        setAuthSession(null);
-        setAuthReady(true);
-        return;
-      }
-
-      void verifySession(session)
-        .then((verifiedSession) => {
-          if (!mounted || run !== validationRun) {
-            return;
-          }
-          setAuthSession(verifiedSession);
-          setAuthReady(true);
-          if (!verifiedSession) {
-            clearStoredAuthTarget();
-            showNotice(
-              "Your sign-in session expired. Please sign in again.",
-              "error",
-            );
-            return;
-          }
-          setGuestMode(false);
-          if (target === "reset-password" || event === "PASSWORD_RECOVERY") {
-            clearStoredAuthTarget();
-            setPasswordRecoveryMode(true);
-            setAuthMode("signin");
-            showNotice("Enter a new password to finish resetting your account.");
-            return;
-          }
-          if (target === "profile" || event === "SIGNED_IN") {
-            openProfileAfterAuth();
-          }
+    if (remoteProfileRow === undefined) {
+      return;
+    }
+    const storedProfile = remoteProfileRow?.profile ?? null;
+    const nextProfile = storedProfile
+      ? emptyProfile({
+          ...storedProfile,
+          username: remoteProfileRow?.username ?? storedProfile.username ?? "",
+          profileSaved:
+            remoteProfileRow?.saved ?? storedProfile.profileSaved ?? true,
         })
-        .catch((error: unknown) => {
-          if (!mounted || run !== validationRun) {
-            return;
-          }
-          setAuthSession(null);
-          setAuthReady(true);
-          clearStoredAuthTarget();
-          showNotice(
-            error instanceof Error
-              ? error.message
-              : "Session verification failed. Please sign in again.",
-            "error",
-          );
+      : emptyProfile({
+          username: sanitizeUsername(user?.username ?? ""),
+          name: user?.fullName ?? "",
+          profilePicture: user?.imageUrl ?? "",
+          profileSaved: false,
         });
-    };
-
-    const returnTarget = authReturnTarget();
-    if (returnTarget === "reset-password") {
-      setPasswordRecoveryMode(true);
-      setAuthMode("signin");
-    }
-    withTimeout(
-      supabaseClient.auth.getSession(),
-      6_000,
-      "Supabase session check is taking too long. Please sign in again.",
-    )
-      .then(({ data }) => {
-        if (!mounted) {
-          return;
-        }
-        commitSession(data.session, returnTarget, "INITIAL_SESSION");
-      })
-      .catch((error: unknown) => {
-        if (!mounted) {
-          return;
-        }
-        validationRun += 1;
-        setAuthSession(null);
-        setAuthReady(true);
-        clearStoredAuthTarget();
-        showNotice(
-          error instanceof Error
-            ? error.message
-            : "Supabase session check failed. Try again.",
-          "error",
-        );
-      });
-    const {
-      data: { subscription },
-    } = supabaseClient.auth.onAuthStateChange((_event, session) => {
-      const target = authReturnTarget();
-      if (_event === "PASSWORD_RECOVERY") {
-        setPasswordRecoveryMode(true);
-        setAuthMode("signin");
-      }
-      window.setTimeout(() => {
-        if (!mounted) {
-          return;
-        }
-        commitSession(session, target, _event);
-      }, 0);
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [setGuestMode]);
-
-  useEffect(() => {
-    if (!supabase || !authSession?.user) {
-      return;
-    }
-    const supabaseClient = supabase;
-    let cancelled = false;
-    const loadProfile = async () => {
-      let storedProfile: Partial<Profile> | null = null;
-      const { data, error } = await supabaseClient
-        .from("user_profiles")
-        .select("profile,name,sex,email")
-        .eq("id", authSession.user.id)
-        .maybeSingle<{
-          profile: Partial<Profile> | null;
-          name: string | null;
-          sex: string | null;
-          email: string | null;
-        }>();
-      if (!error) {
-        storedProfile = data?.profile ?? null;
-      }
-      if (!storedProfile) {
-        storedProfile = await loadSupabaseState<Partial<Profile>>(
-          profileStorageKey(authSession.user.id),
-        ).catch(() => null);
-      }
-      if (cancelled) {
-        return;
-      }
-      const nextProfile = isDemoProfile(storedProfile ?? {})
-        ? emptyProfile()
-        : {
-            ...emptyProfile(),
-            ...(storedProfile ?? {}),
-          };
-      setProfile(nextProfile);
-      setProfileDraft(nextProfile);
-    };
-    loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [authSession, setProfile]);
+    setProfile(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
+    setProfileDraft(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
+    setSelectedProfileName(nextProfile.name || `@${nextProfile.username ?? ""}`);
+  }, [isSignedIn, remoteProfileRow, setProfile, user]);
 
   useEffect(() => {
     setProfileDraft({ ...appUser, ...profile });
@@ -2330,6 +2107,10 @@ export default function App() {
       const invalid = isInvalidAppRoute();
       setRouteNotFound(invalid);
       if (invalid) {
+        return;
+      }
+      if (usernameFromHash()) {
+        setActiveModuleState("profile");
         return;
       }
       const module = moduleFromHash();
@@ -2352,7 +2133,24 @@ export default function App() {
   }, [activeModule]);
 
   useEffect(() => {
-    const userId = authSession?.user.id ?? null;
+    const username = usernameFromHash();
+    if (!username || !isSignedIn) {
+      return;
+    }
+    const match = profileDirectory.get(username) ?? profileDirectory.get(`@${username}`);
+    if (!match) {
+      if (publicProfileRows !== undefined) {
+        setRouteNotFound(true);
+      }
+      return;
+    }
+    setSelectedProfileName(`@${username}`);
+    setProfileDraft({ ...match });
+    setActiveModuleState("profile");
+  }, [isSignedIn, profileDirectory, publicProfileRows]);
+
+  useEffect(() => {
+    const userId = user?.id ?? null;
     if (!userId) {
       lastProfileSetupUserIdRef.current = null;
       return;
@@ -2364,7 +2162,17 @@ export default function App() {
     setSelectedProfileName(profileData.name);
     setProfileDraft({ ...profileData });
     navigateToModule("profile", { skipProfileGuard: true });
-  }, [authSession?.user.id]);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!profileSetupRequired || activeModule === "profile") {
+      return;
+    }
+    setSelectedProfileName(profileData.name);
+    setProfileDraft({ ...profileData });
+    navigateToModule("profile", { skipProfileGuard: true });
+    showNotice("Finish and save your profile before using EverythingUTM.", "error");
+  }, [activeModule, profileData, profileSetupRequired]);
 
   useEffect(() => {
     setProfile((current) =>
@@ -2743,12 +2551,44 @@ export default function App() {
     }
   }, [selectedBusRoute.id, selectedBusStop, selectedBusStops]);
 
+  useEffect(() => {
+    setReplyingToMessage(null);
+    setMessageActionId(null);
+  }, [activeChannel]);
+
   const searchResults = useMemo<SearchResult[]>(() => {
     if (!search) {
       return [];
     }
 
     const results: SearchResult[] = [];
+    publicProfiles.forEach((profile) => {
+      const username = sanitizeUsername(profile.username ?? "");
+      const haystack = [
+        profile.name,
+        username,
+        `@${username}`,
+        profile.faculty,
+        profile.matricNumber,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (username && haystack.includes(search)) {
+        results.push({
+          id: `user-${username}`,
+          module: "profile",
+          title: profile.name || `@${username}`,
+          detail: `User profile · @${username}`,
+          action: () => {
+            setSelectedProfileName(`@${username}`);
+            setProfileDraft(emptyProfile(profile));
+            navigateToModule("profile", { skipProfileGuard: true });
+            window.history.pushState(null, "", `/${hashForUsername(username)}`);
+          },
+        });
+      }
+    });
+
     marketplace.forEach((item) => {
       const haystack = [
         item.title,
@@ -2946,7 +2786,7 @@ export default function App() {
         return aTitleMatch - bTitleMatch;
       })
       .slice(0, 8);
-  }, [marketplace, messages, papers, questions, requests, search]);
+  }, [marketplace, messages, papers, publicProfiles, questions, requests, search]);
 
   function addNotification(
     title: string,
@@ -2975,6 +2815,11 @@ export default function App() {
     module: ModuleKey,
     options: { skipProfileGuard?: boolean } = {},
   ) {
+    if (!options.skipProfileGuard && profileSetupRequired && module !== "profile") {
+      showNotice("Save your profile before opening the rest of the app.", "error");
+      module = "profile";
+      options = { skipProfileGuard: true };
+    }
     if (!options.skipProfileGuard && !confirmDiscardProfileDraft()) {
       return;
     }
@@ -2990,330 +2835,17 @@ export default function App() {
     }
   }
 
-  function switchAuthMode(mode: "signin" | "signup") {
-    setAuthMode(mode);
-    setNotice("");
-    setPasswordRecoveryMode(false);
-    setAuthForm({
-      email: "",
-      password: "",
-      name: "",
-      sex: "Prefer not to say",
-    });
-  }
-
-  async function saveProfileForUserId(
-    userId: string | undefined,
-    nextProfile: Profile,
-    email?: string,
-  ) {
-    if (!supabase || !userId) {
-      return;
-    }
-    const { error } = await supabase.from("user_profiles").upsert({
-      id: userId,
-      email,
-      name: nextProfile.name,
-      sex: nextProfile.sex,
-      profile: nextProfile,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) {
-      await saveSupabaseState(profileStorageKey(userId), nextProfile);
-    }
-  }
-
-  async function syncProfileToSupabase(nextProfile: Profile, email?: string) {
-    await saveProfileForUserId(
-      authSession?.user.id,
-      nextProfile,
-      email ?? authSession?.user.email,
-    );
-  }
-
-  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (authBusy) {
-      return;
-    }
-    if (!supabase) {
-      setGuestMode(false);
-      showNotice("Supabase is not configured yet", "error");
-      return;
-    }
-    if (!authForm.email.trim() || !authForm.password.trim()) {
-      showNotice("Email and password are required", "error");
-      return;
-    }
-
-    setAuthAction(authMode);
-    try {
-      if (authMode === "signup") {
-        if (!authForm.name.trim()) {
-          showNotice("Name is required to create an account", "error");
-          return;
-        }
-
-        storeAuthTarget("profile");
-        const { data, error } = await withTimeout(
-          supabase.auth.signUp({
-            email: authForm.email.trim(),
-            password: authForm.password,
-            options: {
-              data: {
-                name: authForm.name.trim(),
-                sex: authForm.sex,
-              },
-              emailRedirectTo: window.location.origin,
-            },
-          }),
-          10_000,
-          "Signup is taking too long. Supabase may be busy, please try again.",
-        );
-        if (error) {
-          clearStoredAuthTarget();
-          showNotice(
-            error.message.toLowerCase().includes("rate limit")
-              ? "Email sending is busy. Try Google sign-in or wait before requesting another email."
-              : error.message,
-            "error",
-          );
-          return;
-        }
-        if (
-          data.user &&
-          Array.isArray(data.user.identities) &&
-          data.user.identities.length === 0
-        ) {
-          clearStoredAuthTarget();
-          showNotice("This email already has an EverythingUTM account", "error");
-          return;
-        }
-        const nextProfile = emptyProfile();
-        setProfile(nextProfile);
-        setProfileDraft(nextProfile);
-        if (data.session) {
-          setAuthSession(data.session);
-        } else {
-          setGuestMode(false);
-        }
-        saveProfileForUserId(
-          data.user?.id,
-          nextProfile,
-          authForm.email.trim().toLowerCase(),
-        ).catch(() => undefined);
-        showNotice(
-          data.session
-            ? "Account created. Finish your profile setup."
-            : "Account created. Check your email, then sign in to finish your profile setup.",
-        );
-        if (data.session) {
-          clearStoredAuthTarget();
-          openOwnProfile();
-        }
-        return;
-      }
-
-      const { data, error } = await withTimeout(
-        supabase.auth.signInWithPassword({
-          email: authForm.email.trim(),
-          password: authForm.password,
-        }),
-        8_000,
-        "Sign in is taking too long. Supabase may be busy, please try again.",
-      );
-      if (error) {
-        showNotice(error.message, "error");
-        return;
-      }
-      setAuthSession(data.session);
-      setGuestMode(false);
-      clearStoredAuthTarget();
-      showNotice("Signed in. Opening your profile setup.");
-      openOwnProfile();
-    } finally {
-      setAuthAction(null);
-    }
-  }
-
-  async function signInWithGoogle() {
-    if (authBusy) {
-      return;
-    }
-    if (!supabase) {
-      showNotice("Supabase is not configured yet", "error");
-      return;
-    }
-    setAuthAction("google");
-    try {
-      storeAuthTarget("profile");
-      const { data, error } = await withTimeout(
-        supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: window.location.origin,
-            skipBrowserRedirect: true,
-          },
-        }),
-        6_000,
-        "Google sign-in is taking too long. Please try again.",
-      );
-      if (error) {
-        clearStoredAuthTarget();
-        showNotice(error.message, "error");
-        setAuthAction(null);
-        return;
-      }
-      if (!data.url) {
-        clearStoredAuthTarget();
-        showNotice("Google sign-in did not return a redirect link", "error");
-        setAuthAction(null);
-        return;
-      }
-      showNotice("Opening Google sign-in...");
-      window.location.assign(data.url);
-    } catch (error) {
-      clearStoredAuthTarget();
-      showNotice(
-        error instanceof Error
-          ? error.message
-          : "Google sign-in failed. Please try again.",
-        "error",
-      );
-      setAuthAction(null);
-    }
-  }
-
-  async function resetPassword() {
-    if (authBusy) {
-      return;
-    }
-    if (!supabase) {
-      showNotice("Supabase is not configured yet", "error");
-      return;
-    }
-    if (!authForm.email.trim()) {
-      showNotice("Enter your email first", "error");
-      return;
-    }
-    if (Date.now() - resetEmailSentAt < 60_000) {
-      showNotice("Please wait before requesting another reset email", "error");
-      return;
-    }
-    setAuthAction("reset");
-    try {
-      const email = authForm.email.trim().toLowerCase();
-      const { error } = await withTimeout(
-        supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: window.location.origin,
-        }),
-        8_000,
-        "Password reset is taking too long. Please try again.",
-      );
-      if (error) {
-        if (error.message.includes("Password reset is taking too long")) {
-          setResetEmailSentAt(Date.now());
-          showNotice(
-            "If that email is registered, a reset link will be sent shortly.",
-          );
-          return;
-        }
-        showNotice(
-          error.message.toLowerCase().includes("rate limit")
-            ? "Password email is rate limited. Try again later or use Google sign-in."
-            : error.message,
-          "error",
-        );
-        return;
-      }
-      setResetEmailSentAt(Date.now());
-      showNotice(
-        "If that email is registered, a reset link will be sent shortly.",
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Password reset failed. Please try again.";
-      if (message.includes("Password reset is taking too long")) {
-        setResetEmailSentAt(Date.now());
-        showNotice(
-          "If that email is registered, a reset link will be sent shortly.",
-        );
-        return;
-      }
-      showNotice(
-        message,
-        "error",
-      );
-    } finally {
-      setAuthAction(null);
-    }
-  }
-
-  async function updateRecoveredPassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (authBusy) {
-      return;
-    }
-    if (!supabase) {
-      showNotice("Supabase is not configured yet", "error");
-      return;
-    }
-    if (passwordForm.password.length < 6) {
-      showNotice("New password must be at least 6 characters", "error");
-      return;
-    }
-    if (passwordForm.password !== passwordForm.confirmPassword) {
-      showNotice("Password confirmation does not match", "error");
-      return;
-    }
-    setAuthAction("password");
-    try {
-      const { error } = await withTimeout(
-        supabase.auth.updateUser({
-          password: passwordForm.password,
-        }),
-        12_000,
-        "Password update is taking too long. Please try again.",
-      );
-      if (error) {
-        showNotice(error.message, "error");
-        return;
-      }
-      setPasswordForm({ password: "", confirmPassword: "" });
-      setPasswordRecoveryMode(false);
-      setAuthMode("signin");
-      showNotice("Password updated. Sign in with your new password.");
-      await supabase.auth.signOut().catch(() => undefined);
-      setAuthSession(null);
-    } finally {
-      setAuthAction(null);
-    }
-  }
-
   async function signOut() {
     if (!window.confirm("Sign out of EverythingUTM?")) {
       return;
     }
-    setAuthSession(null);
     setGuestMode(false);
     setProfile(emptyProfile());
     setProfileDraft(emptyProfile());
     setSelectedProfileName("");
     showNotice("Signed out");
     navigateToModule("home", { skipProfileGuard: true });
-    if (supabase) {
-      await supabase.auth.signOut().catch(() => undefined);
-    }
-  }
-
-  function browseAsGuest() {
-    setGuestMode(false);
-    setProfile(emptyProfile());
-    setProfileDraft(emptyProfile());
-    setSelectedProfileName("");
-    navigateToModule("home", { skipProfileGuard: true });
+    await clerk.signOut().catch(() => undefined);
   }
 
   function openNotification(item: NotificationItem) {
@@ -3352,6 +2884,37 @@ export default function App() {
 
   function cancelLongPress(key: string) {
     window.clearTimeout(longPressTimers.current[key]);
+  }
+
+  function beginMessagePointer(
+    event: ReactPointerEvent<HTMLElement>,
+    message: ChatMessage,
+  ) {
+    messageSwipeRef.current = {
+      id: message.id,
+      x: event.clientX,
+      y: event.clientY,
+    };
+    startLongPress(message.id, () => setMessageActionId(message.id));
+  }
+
+  function finishMessagePointer(
+    event: ReactPointerEvent<HTMLElement>,
+    message: ChatMessage,
+  ) {
+    cancelLongPress(message.id);
+    const start = messageSwipeRef.current;
+    messageSwipeRef.current = null;
+    if (!start || start.id !== message.id) {
+      return;
+    }
+    const dx = event.clientX - start.x;
+    const dy = Math.abs(event.clientY - start.y);
+    if (dx > 58 && dy < 70) {
+      setReplyingToMessage(message);
+      setMessageActionId(null);
+      showNotice(`Replying to ${message.author}`);
+    }
   }
 
   function clearActionFocus() {
@@ -3491,18 +3054,25 @@ export default function App() {
     if (!confirmDiscardProfileDraft()) {
       return;
     }
-    setSelectedProfileName(name);
-    setProfileDraft({ ...getProfile(name) });
+    const entry = getProfile(name);
+    const username = sanitizeUsername(entry.username ?? "");
+    setSelectedProfileName(username ? `@${username}` : name);
+    setProfileDraft({ ...entry });
     navigateToModule("profile", { skipProfileGuard: true });
+    if (username) {
+      window.history.pushState(null, "", `/${hashForUsername(username)}`);
+    }
   }
 
   function openOwnProfile() {
     if (!confirmDiscardProfileDraft()) {
       return;
     }
-    setSelectedProfileName(profileData.name);
+    const username = sanitizeUsername(profileData.username ?? "");
+    setSelectedProfileName(username ? `@${username}` : profileData.name);
     setProfileDraft({ ...profileData });
     navigateToModule("profile", { skipProfileGuard: true });
+    window.history.pushState(null, "", `/${hashForModule("profile")}`);
   }
 
   function buyListing(item: MarketplaceItem) {
@@ -3719,11 +3289,25 @@ export default function App() {
       image: messageImage || undefined,
       voiceUrl: messageVoice || undefined,
       voiceDuration: messageVoice ? messageVoiceDuration : undefined,
+      replyTo: replyingToMessage
+        ? {
+            id: replyingToMessage.id,
+            author: replyingToMessage.author,
+            content:
+              replyingToMessage.content ||
+              (replyingToMessage.voiceUrl
+                ? "Voice message"
+                : replyingToMessage.image
+                  ? "Photo"
+                  : "Message"),
+          }
+        : undefined,
       time: new Date().toISOString(),
     };
     setMessages((current) => [...current, message]);
     setMessageDraft("");
     setMessageImage("");
+    setReplyingToMessage(null);
     clearVoiceMessage();
     addNotification("Message sent", `Posted to ${activeChannel}.`, "community");
   }
@@ -4502,11 +4086,37 @@ export default function App() {
     }
   }
 
-  function saveProfile() {
+  async function saveProfile() {
+    const nextUsername = sanitizeUsername(
+      profileDraft.username || profileDraft.name || user?.username || "",
+    );
+    if (!profileDraft.name.trim()) {
+      showNotice("Profile needs your name before saving", "error");
+      return;
+    }
+    if (nextUsername.length < 3) {
+      showNotice("Choose a username with at least 3 letters or numbers", "error");
+      return;
+    }
     const nextProfile = {
       ...profileDraft,
+      name: profileDraft.name.trim(),
+      username: nextUsername,
       contactNumber: sanitizePhoneInput(profileDraft.contactNumber),
+      profileSaved: true,
     };
+    try {
+      await upsertCurrentProfile({
+        username: nextUsername,
+        profile: toConvexJson(nextProfile),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Profile could not be saved online",
+        "error",
+      );
+      return;
+    }
     setMarketplace((current) =>
       current.map((item) =>
         isCurrentUserEntity(item.sellerId, item.seller)
@@ -4588,8 +4198,8 @@ export default function App() {
       })),
     );
     setProfile(nextProfile);
-    syncProfileToSupabase(nextProfile).catch(() => undefined);
-    setSelectedProfileName(nextProfile.name);
+    setProfileDraft(nextProfile);
+    setSelectedProfileName(`@${nextUsername}`);
     showNotice("Profile saved");
     addNotification("Profile saved", "Your student profile was updated.", "profile");
   }
@@ -4615,77 +4225,22 @@ export default function App() {
   }
 
   async function deleteAccountOnline() {
-    if (!supabase || !authSession) {
-      throw new Error("Sign in before deleting your online account");
+    if (!isSignedIn || !user) {
+      throw new Error("Sign in before deleting your account");
     }
 
-    let lastError = "Online account deletion failed";
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
-
+    await deleteCurrentProfileData();
     try {
-      const response = await fetch("/.netlify/functions/delete-account", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${authSession.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-        signal: controller.signal,
-      }).catch(() => null);
-
-      if (!response) {
-        throw new Error("Online account deletion service is unavailable");
-      }
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok || payload?.ok !== true) {
-        throw new Error(
-          payload?.reason || "Online account deletion failed",
-        );
-      }
-      return;
-    } catch (error) {
-      lastError =
-        error instanceof Error ? error.message : "Online account deletion failed";
-    } finally {
-      window.clearTimeout(timeoutId);
+      await deleteCurrentClerkUser({});
+    } catch {
+      await user.delete();
     }
-
-    const edgeResult = await withTimeout(
-      supabase.functions.invoke("delete-account"),
-      15000,
-      "Delete account Edge Function timed out",
-    ).catch((error: unknown) => ({ data: null, error }));
-
-    if (!edgeResult.error && edgeResult.data?.ok === true) {
-      return;
-    }
-
-    if (edgeResult.error instanceof Error) {
-      lastError = edgeResult.error.message;
-    } else if (edgeResult.data?.reason) {
-      lastError = edgeResult.data.reason;
-    }
-
-    const rpcResult = await withTimeout(
-      Promise.resolve(supabase.rpc("delete_everythingutm_current_user")),
-      12000,
-      "Delete RPC timed out",
-    ).catch((error: unknown) => ({ error }));
-
-    if (rpcResult && !rpcResult.error) {
-      return;
-    }
-
-    throw new Error(lastError);
   }
 
   async function deleteLocalAccount() {
     if (deleteAccountLoading) return;
 
-    if (!authSession) {
+    if (!isSignedIn || !user) {
       showNotice("Sign in before deleting your account", "error");
       return;
     }
@@ -4693,7 +4248,7 @@ export default function App() {
     if (!deleteAccountArmed) {
       if (
         !window.confirm(
-          "Delete your EverythingUTM account? This permanently removes your Supabase account and cannot be undone.",
+          "Delete your EverythingUTM account? This permanently removes your Clerk account and Convex profile data and cannot be undone.",
         )
       ) {
         return;
@@ -4717,7 +4272,7 @@ export default function App() {
     }
 
     const rate = consumeRateLimit(
-      `everything-utm:rate:delete:${authSession?.user.id ?? "anon"}`,
+      `everything-utm:rate:delete:${currentUserId}`,
       2,
       10 * 60_000,
     );
@@ -4734,23 +4289,17 @@ export default function App() {
     try {
       await deleteAccountOnline();
 
-      await withTimeout(
-        supabase
-          ? supabase.auth.signOut().then(() => undefined)
-          : Promise.resolve(),
-        4_000,
-        "Sign out after deletion timed out",
-      ).catch(() => undefined);
+      await withTimeout(clerk.signOut(), 4_000, "Sign out after deletion timed out")
+        .catch(() => undefined);
       clearEverythingUtmStorage();
       setDeleteAccountArmed(false);
       setDeleteConfirmText("");
-      setAuthSession(null);
       setGuestMode(false);
       setProfile(emptyProfile());
       setProfileDraft(emptyProfile());
       setSelectedProfileName("");
+      window.history.replaceState(null, "", `/${hashForModule("home")}`);
       navigateToModule("home", { skipProfileGuard: true });
-      setAuthMode("signin");
       showNotice("Account deleted online.");
     } catch (error) {
       showNotice(
@@ -4771,7 +4320,7 @@ export default function App() {
     }
 
     const rate = consumeRateLimit(
-      `everything-utm:rate:bug:${authSession?.user.id ?? authSession?.user.email ?? "anon"}`,
+      `everything-utm:rate:bug:${currentUserId}`,
       3,
       10 * 60_000,
     );
@@ -4783,131 +4332,37 @@ export default function App() {
       return;
     }
 
-    if (!supabase) {
-      showNotice("Bug report email needs Supabase configuration", "error");
-      return;
-    }
-
     setBugReportLoading(true);
 
     try {
       const payload = {
-        userName: isSignedIn ? currentDisplayName : "Not signed in",
-        userEmail: authSession?.user.email ?? "not signed in",
-        dateTime: new Date().toISOString(),
+        userName: currentDisplayName,
+        userEmail: currentUserEmail || "not shared",
         details: bugReportDraft.trim(),
       };
 
-      const supabaseClient = supabase;
-
-      const storeBugReportFallback = async (emailError: string) => {
-        const report = {
-          id: uid("bug"),
-          userName: payload.userName,
-          userEmail: payload.userEmail,
-          dateTime: payload.dateTime,
-          details: payload.details,
-          emailed: false,
-          emailError,
-        };
-
-        const { error: tableError } = await supabaseClient.from("bug_reports").insert({
-          user_name: report.userName,
-          user_email: report.userEmail,
-          details: report.details,
-          reported_at: report.dateTime,
-          emailed: false,
-          email_error: emailError,
-        });
-
-        if (!tableError) {
-          return true;
-        }
-
-        const currentReports = await loadSupabaseState<Array<typeof report>>(
-          "everything-utm:bug-reports",
-        ).catch(() => []);
-
-        await saveSupabaseState("everything-utm:bug-reports", [
-          report,
-          ...((currentReports ?? []) as Array<typeof report>),
-        ].slice(0, 200));
-
-        return true;
-      };
-
-      const sendBugReportEmail = async () => {
-        let lastError = "Bug report email failed";
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
-        try {
-          const response = await fetch("/.netlify/functions/report-bug", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-          });
-          if (response) {
-            const responsePayload = await response.json().catch(() => ({}));
-            if (response.ok && responsePayload?.ok === true) {
-              return "sent";
-            }
-            throw new Error(
-              responsePayload?.reason ||
-                "Bug report email failed",
-            );
-          }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") {
-            return "submitted";
-          }
-          lastError =
-            error instanceof Error ? error.message : "Bug report email failed";
-        } finally {
-          window.clearTimeout(timeoutId);
-        }
-
-        const edgeResult = await withTimeout(
-          supabaseClient.functions.invoke("report-bug", { body: payload }),
-          8_000,
-          "Bug report email timed out",
-        ).catch((invokeError: unknown) => ({ data: null, error: invokeError }));
-
-        if (!edgeResult.error && edgeResult.data?.ok === true) {
-          return "sent";
-        }
-
-        throw new Error(
-          edgeResult.error instanceof Error
-            ? edgeResult.error.message
-            : edgeResult.data?.reason || lastError,
-        );
-      };
-
       try {
-        const sendStatus = await sendBugReportEmail();
-        setBugReportDraft("");
-        showNotice(
-          sendStatus === "submitted"
-            ? "Bug report submitted. Email delivery may take a moment."
-            : "Bug report emailed successfully",
+        await withTimeout(
+          sendBugReportEmail(payload),
+          12_000,
+          "Bug report email timed out",
         );
+        await createBugReport({ ...payload, emailed: true });
+        setBugReportDraft("");
+        showNotice("Bug report emailed successfully");
         addNotification("Bug report received", "Thanks for the report.", "settings");
         return;
       } catch (error) {
-        try {
-          await storeBugReportFallback(
-            error instanceof Error
-              ? error.message
-              : "Bug report email function unavailable",
-          );
-        } catch {
-          showNotice("Bug report could not be saved", "error");
-          return;
-        }
+        const emailError =
+          error instanceof Error ? error.message : "Bug report email unavailable";
+        await createBugReport({
+          ...payload,
+          emailed: false,
+          emailError,
+        }).catch(() => undefined);
 
         showNotice(
-          "Bug report saved, but email delivery is not configured on the server yet",
+          `Bug report saved, but email delivery failed: ${emailError}`,
           "error",
         );
         return;
@@ -4973,86 +4428,6 @@ export default function App() {
     );
   }
 
-  if (passwordRecoveryMode) {
-    return (
-      <div className="auth-shell">
-        <section className="auth-card">
-          <div className="brand auth-brand">
-            <div className="brand-mark" aria-hidden="true">
-              <img src="/everythingutm-icon.png" alt="" />
-            </div>
-            <div>
-              <p>EverythingUTM</p>
-              <span>Reset your password</span>
-            </div>
-          </div>
-          <div>
-            <p className="eyebrow">Password recovery</p>
-            <h1>Choose a new password</h1>
-            <p className="muted">
-              Enter your new password twice, then sign in again with the updated
-              password.
-            </p>
-          </div>
-          <NoticeBanner message={notice} tone={noticeTone} />
-          <form className="stacked-form" onSubmit={updateRecoveredPassword}>
-            <label>
-              <span>New password</span>
-              <input
-                autoComplete="new-password"
-                type="password"
-                value={passwordForm.password}
-                onChange={(event) =>
-                  setPasswordForm((form) => ({
-                    ...form,
-                    password: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <label>
-              <span>Confirm new password</span>
-              <input
-                autoComplete="new-password"
-                type="password"
-                value={passwordForm.confirmPassword}
-                onChange={(event) =>
-                  setPasswordForm((form) => ({
-                    ...form,
-                    confirmPassword: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <button className="primary-button full-width" type="submit" disabled={authBusy}>
-              <Check size={17} aria-hidden="true" />
-              {authAction === "password" ? "Updating..." : "Update password"}
-            </button>
-          </form>
-          <button
-            className="ghost-button full-width"
-            type="button"
-            disabled={authBusy}
-            onClick={async () => {
-              setPasswordRecoveryMode(false);
-              setPasswordForm({ password: "", confirmPassword: "" });
-              setAuthMode("signin");
-              await withTimeout(
-                supabase ? supabase.auth.signOut().then(() => {}) : Promise.resolve(),
-                5000,
-                "Sign out timed out",
-              ).catch(() => undefined);
-              setAuthSession(null);
-              showNotice("Password reset cancelled", "error");
-            }}
-          >
-            Back to sign in
-          </button>
-        </section>
-      </div>
-    );
-  }
-
   if (!canUseApp) {
     return (
       <div className="auth-shell">
@@ -5068,120 +4443,31 @@ export default function App() {
           </div>
           <div>
             <p className="eyebrow">Welcome</p>
-            <h1>{authMode === "signup" ? "Create account" : "Sign in"}</h1>
+            <h1>Sign in to EverythingUTM</h1>
             <p className="muted">
               Browse listings, chats, transport, maps, papers, and bus schedules
-              from one student hub.
+              from one student hub. A saved profile is required before entering
+              the app.
             </p>
           </div>
           <NoticeBanner message={notice} tone={noticeTone} />
-          <div className="segmented-control">
-            <button
-              className={authMode === "signin" ? "is-active" : ""}
-              type="button"
-              disabled={authBusy}
-              onClick={() => switchAuthMode("signin")}
-            >
-              Sign in
-            </button>
-            <button
-              className={authMode === "signup" ? "is-active" : ""}
-              type="button"
-              disabled={authBusy}
-              onClick={() => switchAuthMode("signup")}
-            >
-              Sign up
-            </button>
+          <div className="auth-action-stack">
+            <SignInButton mode="modal" forceRedirectUrl="/#profile">
+              <button className="primary-button full-width" type="button">
+                <UserCircle size={17} aria-hidden="true" />
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal" forceRedirectUrl="/#profile">
+              <button className="secondary-button full-width" type="button">
+                <Plus size={17} aria-hidden="true" />
+                Create account
+              </button>
+            </SignUpButton>
           </div>
-          <form className="stacked-form" onSubmit={handleAuthSubmit}>
-            {authMode === "signup" && (
-              <div className="two-col">
-                <label>
-                  <span>Name</span>
-                  <input
-                    value={authForm.name}
-                    onChange={(event) =>
-                      setAuthForm((form) => ({
-                        ...form,
-                        name: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  <span>Sex</span>
-                  <select
-                    value={authForm.sex}
-                    onChange={(event) =>
-                      setAuthForm((form) => ({ ...form, sex: event.target.value }))
-                    }
-                  >
-                    <option>Female</option>
-                    <option>Male</option>
-                    <option>Prefer not to say</option>
-                  </select>
-                </label>
-              </div>
-            )}
-            <label>
-              <span>Email</span>
-              <input
-                autoComplete="email"
-                type="email"
-                value={authForm.email}
-                onChange={(event) =>
-                  setAuthForm((form) => ({ ...form, email: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Password</span>
-              <input
-                autoComplete={
-                  authMode === "signup" ? "new-password" : "current-password"
-                }
-                type="password"
-                value={authForm.password}
-                onChange={(event) =>
-                  setAuthForm((form) => ({
-                    ...form,
-                    password: event.target.value,
-                  }))
-                }
-              />
-            </label>
-            <button className="primary-button full-width" type="submit" disabled={authBusy}>
-              <UserCircle size={17} aria-hidden="true" />
-              {authAction === "signup" || authAction === "signin"
-                ? authAction === "signup"
-                  ? "Creating..."
-                  : "Signing in..."
-                : authMode === "signup"
-                  ? "Create account"
-                  : "Sign in"}
-            </button>
-          </form>
-          <button
-            className="secondary-button full-width"
-            type="button"
-            disabled={authBusy}
-            onClick={signInWithGoogle}
-          >
-            <BadgeCheck size={17} aria-hidden="true" />
-            {authAction === "google" ? "Opening Google..." : "Continue with Google"}
-          </button>
-          {authMode === "signin" && (
-            <button
-              className="ghost-button full-width"
-              type="button"
-              disabled={authBusy}
-              onClick={resetPassword}
-            >
-              {authAction === "reset" ? "Sending reset..." : "Reset password"}
-            </button>
-          )}
           <p className="fine-print">
-            Create an account to access EverythingUTM and sync your campus data online.
+            Password reset, Google sign-in, duplicate email checks, and session
+            security are handled directly by Clerk.
           </p>
         </section>
       </div>
@@ -6652,14 +5938,15 @@ export default function App() {
                         }`}
                         key={message.id}
                         onDoubleClick={() => reactToMessage(message.id, "❤️")}
-                        onPointerCancel={() => cancelLongPress(message.id)}
-                        onPointerDown={() =>
-                          startLongPress(message.id, () =>
-                            setMessageActionId(message.id),
-                          )
+                        onPointerCancel={() => {
+                          cancelLongPress(message.id);
+                          messageSwipeRef.current = null;
+                        }}
+                        onPointerDown={(event) =>
+                          beginMessagePointer(event, message)
                         }
                         onPointerLeave={() => cancelLongPress(message.id)}
-                        onPointerUp={() => cancelLongPress(message.id)}
+                        onPointerUp={(event) => finishMessagePointer(event, message)}
                       >
                         <div className="message-head">
                           <button
@@ -6700,7 +5987,19 @@ export default function App() {
                             </button>
                           </div>
                         ) : (
-                          <p>{message.content}</p>
+                          <>
+                            {message.replyTo && (
+                              <button
+                                className="reply-preview"
+                                type="button"
+                                onClick={() => showNotice(`Reply to ${message.replyTo?.author}`)}
+                              >
+                                <span>{message.replyTo.author}</span>
+                                <p>{message.replyTo.content}</p>
+                              </button>
+                            )}
+                            {message.content && <p>{message.content}</p>}
+                          </>
                         )}
                         {message.image && (
                           <button
@@ -6791,6 +6090,29 @@ export default function App() {
               </div>
 
               <form className="chat-composer" onSubmit={handleChatSubmit}>
+                {replyingToMessage && (
+                  <div className="reply-composer">
+                    <div>
+                      <span>Replying to {replyingToMessage.author}</span>
+                      <p>
+                        {replyingToMessage.content ||
+                          (replyingToMessage.voiceUrl
+                            ? "Voice message"
+                            : replyingToMessage.image
+                              ? "Photo"
+                              : "Message")}
+                      </p>
+                    </div>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      onClick={() => setReplyingToMessage(null)}
+                      aria-label="Cancel reply"
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
                 <label className="icon-button attachment-button" title="Add picture">
                   <ImagePlus size={17} aria-hidden="true" />
                   <input type="file" accept="image/*" onChange={updateMessageImage} />
@@ -8257,6 +7579,24 @@ export default function App() {
                         />
                       </label>
                     </div>
+                    <label>
+                      <span className="field-label-icon">
+                        <UserRound size={14} aria-hidden="true" />
+                        Username
+                      </span>
+                      <input
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        value={profileDraft.username ?? ""}
+                        onChange={(event) =>
+                          setProfileDraft((current) => ({
+                            ...current,
+                            username: sanitizeUsername(event.target.value),
+                          }))
+                        }
+                        placeholder="e.g. hasan_utm"
+                      />
+                    </label>
                     <div className="two-col">
                       <label>
                         <span className="field-label-icon">
@@ -8376,6 +7716,13 @@ export default function App() {
                   </div>
                   <div className="profile-detail-list">
                     <span>
+                      <UserRound size={15} aria-hidden="true" />
+                      Username:{" "}
+                      {selectedProfile.username
+                        ? `@${selectedProfile.username}`
+                        : "Not shared"}
+                    </span>
+                    <span>
                       <Phone size={15} aria-hidden="true" />
                       Contact: {selectedProfile.contactNumber || "Not shared"}
                     </span>
@@ -8474,31 +7821,19 @@ export default function App() {
             <div className="settings-layout">
               <section className="panel settings-info-panel auth-inline-panel">
                 <div className="panel-heading">
-                  <h2>{isSignedIn ? "Account" : "Guest access"}</h2>
+                  <h2>Account</h2>
                   <UserCircle size={18} aria-hidden="true" />
                 </div>
                 <p className="muted settings-note">
-                  {isSignedIn
-                    ? `Signed in as ${authSession?.user.email ?? profileData.name}.`
-                    : "You are browsing as a guest. Sign in to sync your data and account profile."}
+                  Signed in as {currentUserEmail || profileData.name || "your Clerk account"}.
                 </p>
-                {isSignedIn ? (
+                <div className="account-actions">
+                  <UserButton />
                   <button className="secondary-button full-width" type="button" onClick={signOut}>
                     <ExternalLink size={16} aria-hidden="true" />
                     Sign out
                   </button>
-                ) : (
-                  <button
-                    className="primary-button full-width"
-                    type="button"
-                    onClick={() => {
-                      setGuestMode(false);
-                      switchAuthMode("signin");
-                    }}
-                  >
-                    Sign in
-                  </button>
-                )}
+                </div>
               </section>
               <section className="panel">
                 <div className="panel-heading">

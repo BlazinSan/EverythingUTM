@@ -1,35 +1,42 @@
 # EverythingUTM Deployment
 
-## Supabase
+## Clerk + Convex
 
-1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor, or run `supabase db push` after logging in with the Supabase CLI.
+1. Create a Clerk application and enable Email plus Google sign-in.
+2. Create a Convex project with `npx convex dev`.
 3. Copy `.env.example` to `.env.local`.
-4. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-
-The app uses Supabase as a shared `app_state` database and falls back to browser storage when the Supabase variables are missing.
-
-For production Auth, enable Google in Supabase Auth Providers and configure a custom SMTP sender. Supabase's default email sender is rate-limited, so custom SMTP prevents the "email rate limit reached" issue for signup and password reset flows.
-
-Deploy the included Edge Functions for account deletion and invisible bug-report emails:
+4. Fill in `VITE_CLERK_PUBLISHABLE_KEY` and `VITE_CONVEX_URL`.
+5. Set Convex auth with your Clerk issuer:
 
 ```bash
-supabase link --project-ref your-project-ref
-supabase db push
-supabase functions deploy report-bug
-supabase functions deploy delete-account
-supabase secrets set RESEND_API_KEY=your-resend-key
-supabase secrets set BUG_REPORT_FROM="EverythingUTM <verified-sender@example.com>"
-supabase secrets set BUG_REPORT_TO="hammau05@gmail.com"
+npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-clerk-app.clerk.accounts.dev
 ```
 
-Bug reports are sent through the `report-bug` Edge Function and also stored in
-`public.bug_reports` with the email delivery status. Resend requires a verified
-sender/domain for production delivery.
+The app uses Clerk for account creation, password reset, Google sign-in, and
+sign-out. Convex stores profiles, synced app state, and bug-report records.
+
+For bug-report emails, set these Convex environment variables:
+
+```bash
+npx convex env set CLERK_SECRET_KEY sk_live_or_test_server_side_key
+npx convex env set RESEND_API_KEY your-resend-key
+npx convex env set BUG_REPORT_FROM "EverythingUTM <verified-sender@example.com>"
+npx convex env set BUG_REPORT_TO "hammau05@gmail.com"
+```
+
+Bug reports are sent through a Convex action and stored with the email delivery
+status. Resend requires a verified sender/domain for production delivery.
 
 ## Netlify
 
-The included `netlify.toml` uses `npm run build`, publishes `dist`, and routes all app paths back to `index.html`.
+The included `netlify.toml` deploys Convex and the frontend together:
+
+```bash
+npx convex deploy --cmd "npm run build"
+```
+
+Add these Netlify environment variables: `VITE_CLERK_PUBLISHABLE_KEY`,
+`VITE_CONVEX_URL`, and `CONVEX_DEPLOY_KEY`.
 
 ```bash
 netlify deploy --prod --dir=dist --site everythingutm

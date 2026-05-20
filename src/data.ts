@@ -13,6 +13,8 @@ import type {
 } from "./types";
 
 export const appUser: Profile = {
+  username: "",
+  profileSaved: false,
   name: "",
   role: "",
   contactNumber: "",

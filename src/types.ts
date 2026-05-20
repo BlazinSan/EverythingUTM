@@ -63,6 +63,11 @@ export type ChatMessage = {
   author: string;
   authorId?: string;
   authorAvatar?: string;
+  replyTo?: {
+    id: string;
+    author: string;
+    content: string;
+  };
   content: string;
   image?: string;
   voiceUrl?: string;
@@ -156,6 +161,8 @@ export type ServiceRequest = {
 };
 
 export type Profile = {
+  username?: string;
+  profileSaved?: boolean;
   name: string;
   role: string;
   contactNumber: string;
