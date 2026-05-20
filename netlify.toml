@@ -1,5 +1,5 @@
 [build]
-  command = "npx convex deploy --cmd \"npm run build\""
+  command = "node scripts/validate-netlify-env.mjs && npx convex deploy --cmd \"npm run build\" --cmd-url-env-var-name VITE_CONVEX_URL"
   publish = "dist"
 
 [[redirects]]

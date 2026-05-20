@@ -32,11 +32,15 @@ status. Resend requires a verified sender/domain for production delivery.
 The included `netlify.toml` deploys Convex and the frontend together:
 
 ```bash
-npx convex deploy --cmd "npm run build"
+node scripts/validate-netlify-env.mjs && npx convex deploy --cmd "npm run build" --cmd-url-env-var-name VITE_CONVEX_URL
 ```
 
-Add these Netlify environment variables: `VITE_CLERK_PUBLISHABLE_KEY`,
-`VITE_CONVEX_URL`, and `CONVEX_DEPLOY_KEY`.
+Add these Netlify environment variables: `CONVEX_DEPLOY_KEY` and
+`VITE_CLERK_PUBLISHABLE_KEY`. Convex injects `VITE_CONVEX_URL` during the build
+through `--cmd-url-env-var-name VITE_CONVEX_URL`.
+
+Remove the old `VITE_SUPABASE_*` variables from Netlify so the site settings
+match the current Clerk + Convex stack.
 
 ```bash
 netlify deploy --prod --dir=dist --site everythingutm
