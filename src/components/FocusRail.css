@@ -1,0 +1,198 @@
+.focus-rail {
+  position: relative;
+  width: 100%;
+  min-height: 620px;
+  overflow: hidden;
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(15, 17, 23, 0.48), rgba(15, 17, 23, 0.95)),
+    #0f1117;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  outline: none;
+  isolation: isolate;
+  touch-action: pan-y;
+}
+
+.focus-rail-ambience {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+}
+
+.focus-rail-ambience img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(38px) saturate(1.45);
+  transform: scale(1.14);
+}
+
+.focus-rail-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 390px;
+  margin: 34px auto 0;
+  perspective: 1100px;
+  cursor: grab;
+}
+
+.focus-rail-stage:active {
+  cursor: grabbing;
+}
+
+.focus-rail-card {
+  position: absolute;
+  display: grid;
+  align-content: end;
+  width: min(290px, 58vw);
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  color: #fff;
+  text-align: left;
+  background: #151b24;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.38);
+  transform-style: preserve-3d;
+}
+
+.focus-rail-card::after {
+  position: absolute;
+  inset: 40% 0 0;
+  content: "";
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.82));
+}
+
+.focus-rail-card img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.focus-rail-card span,
+.focus-rail-card strong {
+  position: relative;
+  z-index: 1;
+  margin-inline: 18px;
+  overflow-wrap: anywhere;
+}
+
+.focus-rail-card span {
+  width: fit-content;
+  margin-bottom: 8px;
+  padding: 5px 8px;
+  color: #ffdbe3;
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(216, 74, 95, 0.82);
+  border-radius: 999px;
+}
+
+.focus-rail-card strong {
+  margin-bottom: 18px;
+  font-size: 23px;
+  line-height: 1.1;
+}
+
+.focus-rail-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(920px, calc(100% - 40px));
+  min-height: 142px;
+  margin: 22px auto 28px;
+}
+
+.focus-rail-info h2,
+.focus-rail-info p {
+  margin: 0;
+}
+
+.focus-rail-info span {
+  display: inline-flex;
+  margin-bottom: 7px;
+  color: #79eed6;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.focus-rail-info h2 {
+  font-size: clamp(28px, 5vw, 42px);
+  line-height: 1;
+}
+
+.focus-rail-info p {
+  max-width: 520px;
+  margin-top: 9px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.45;
+}
+
+.focus-rail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.focus-rail-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 42px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.focus-rail-actions small {
+  min-width: 44px;
+  color: rgba(255, 255, 255, 0.58);
+  font-weight: 900;
+  text-align: center;
+}
+
+.focus-rail-actions .focus-rail-explore {
+  gap: 7px;
+  padding-inline: 17px;
+  background: var(--utm-red);
+  border-color: var(--utm-red);
+}
+
+@media (max-width: 720px) {
+  .focus-rail {
+    min-height: 550px;
+    border-radius: 12px;
+  }
+
+  .focus-rail-stage {
+    height: 310px;
+    margin-top: 22px;
+  }
+
+  .focus-rail-card {
+    width: min(245px, 64vw);
+  }
+
+  .focus-rail-info {
+    display: grid;
+    width: calc(100% - 24px);
+    min-height: 0;
+    margin-block: 14px 18px;
+  }
+
+  .focus-rail-actions {
+    justify-content: center;
+  }
+}

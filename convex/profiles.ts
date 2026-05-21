@@ -18,6 +18,16 @@ function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
 
+function withoutLargeProfileMedia(profile: unknown) {
+  if (!profile || typeof profile !== "object") {
+    return profile;
+  }
+  return {
+    ...(profile as Record<string, unknown>),
+    profilePicture: "",
+  };
+}
+
 export const getCurrent = query({
   args: {},
   handler: async (ctx) => {
@@ -43,7 +53,13 @@ export const listPublic = query({
       .query("profiles")
       .withIndex("by_userId")
       .order("desc")
-      .take(200);
+      .take(50)
+      .then((rows) =>
+        rows.map((row) => ({
+          ...row,
+          profile: withoutLargeProfileMedia(row.profile),
+        })),
+      );
   },
 });
 
@@ -54,12 +70,13 @@ export const getByUsername = query({
     if (!identity) {
       return null;
     }
-    return await ctx.db
+    const row = await ctx.db
       .query("profiles")
       .withIndex("by_usernameNormalized", (q) =>
         q.eq("usernameNormalized", normalizeUsername(args.username)),
       )
       .unique();
+    return row ? { ...row, profile: withoutLargeProfileMedia(row.profile) } : null;
   },
 });
 
@@ -70,12 +87,16 @@ export const search = query({
     if (!identity || !args.query.trim()) {
       return [];
     }
-    return await ctx.db
+    const rows = await ctx.db
       .query("profiles")
       .withSearchIndex("search_username", (q) =>
         q.search("username", args.query).eq("saved", true),
       )
       .take(8);
+    return rows.map((row) => ({
+      ...row,
+      profile: withoutLargeProfileMedia(row.profile),
+    }));
   },
 });
 
@@ -137,8 +158,7 @@ export const upsertCurrent = mutation({
 export const deleteCurrentData = mutation({
   args: {},
   handler: async (ctx) => {
-    const { userId, clerkUserId } = await requireUser(ctx);
-    const ownedUserIds = new Set([userId, clerkUserId]);
+    const { userId } = await requireUser(ctx);
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -147,73 +167,27 @@ export const deleteCurrentData = mutation({
       await ctx.db.delete(profile._id);
     }
 
-    const ownedKeys = [
+    const legacySharedKeys = [
       "everything-utm:marketplace",
       "everything-utm:messages",
       "everything-utm:questions",
       "everything-utm:requests",
       "everything-utm:profile-reviews",
+      "everything-utm:papers",
+      "everything-utm:bus-documents",
+      "everything-utm:banned-users",
+      "everything-utm:typing-signals",
     ];
 
-    for (const storageKey of ownedKeys) {
+    for (const storageKey of legacySharedKeys) {
       const row = await ctx.db
         .query("appState")
         .withIndex("by_storageKey", (q) => q.eq("storageKey", storageKey))
         .unique();
-      if (!row || !Array.isArray(row.data)) {
+      if (!row) {
         continue;
       }
-      const data = row.data;
-      const nextData = data
-        .filter((item) => {
-          if (!item || typeof item !== "object") {
-            return true;
-          }
-          const entry = item as Record<string, unknown>;
-          return ![
-            entry.authorId,
-            entry.sellerId,
-            entry.requesterId,
-            entry.reviewerId,
-          ].some((value) => typeof value === "string" && ownedUserIds.has(value));
-        })
-        .map((item) => {
-          if (!item || typeof item !== "object") {
-            return item;
-          }
-          const entry = item as Record<string, unknown>;
-          if (
-            typeof entry.driverId === "string" &&
-            ownedUserIds.has(entry.driverId)
-          ) {
-            const { driver, driverId, driverAvatar, ...rest } = entry;
-            return {
-              ...rest,
-              status: entry.status === "Matched" ? "Open" : entry.status,
-            };
-          }
-          if (Array.isArray(entry.answers)) {
-            return {
-              ...entry,
-              answers: entry.answers.filter((answer) => {
-                return (
-                  !answer ||
-                  typeof answer !== "object" ||
-                  !ownedUserIds.has(
-                    String((answer as Record<string, unknown>).authorId ?? ""),
-                  )
-                );
-              }),
-            };
-          }
-          return item;
-        });
-
-      await ctx.db.patch(row._id, {
-        data: nextData,
-        updatedAt: Date.now(),
-        updatedBy: userId,
-      });
+      await ctx.db.delete(row._id);
     }
 
     return true;

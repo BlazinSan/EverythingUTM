@@ -75,12 +75,22 @@ export type ChatMessage = {
   };
   content: string;
   image?: string;
+  attachments?: ChatAttachment[];
   voiceUrl?: string;
   voiceDuration?: number;
   time: string;
   editedAt?: string;
   likedBy?: string[];
   reactions?: Record<string, string[]>;
+};
+
+export type ChatAttachment = {
+  id: string;
+  name: string;
+  kind: "image" | "video" | "file";
+  type: string;
+  url: string;
+  size: number;
 };
 
 export type Answer = {

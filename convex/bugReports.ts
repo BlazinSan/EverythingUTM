@@ -103,3 +103,73 @@ export const sendEmail = action({
     return { ok: true, provider: "resend", reportedAtLocal };
   },
 });
+
+export const sendListingReportEmail = action({
+  args: {
+    listingUrl: v.string(),
+    listingTitle: v.string(),
+    listingContent: v.string(),
+    listingCategory: v.string(),
+    listingPrice: v.string(),
+    sellerName: v.string(),
+    sellerUsername: v.string(),
+    reporterName: v.string(),
+    reporterUsername: v.string(),
+    postedAt: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("You must be signed in to report a listing.");
+    }
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const toEmail = process.env.BUG_REPORT_TO || "hammau05@gmail.com";
+    const fromEmail =
+      process.env.BUG_REPORT_FROM || "EverythingUTM <onboarding@resend.dev>";
+    const reportedAtLocal = formatMalaysiaDateTime(Date.now());
+
+    const text = [
+      "EverythingUTM Marketplace Listing Report",
+      "",
+      `Reported at: ${reportedAtLocal}`,
+      `Reported by: ${args.reporterName || "Unknown"} (${args.reporterUsername || "username not shared"})`,
+      "",
+      "Listing",
+      `Title: ${args.listingTitle}`,
+      `Link: ${args.listingUrl}`,
+      `Category: ${args.listingCategory}`,
+      `Price: ${args.listingPrice}`,
+      `Posted at: ${args.postedAt}`,
+      `Seller: ${args.sellerName || "Unknown"} (${args.sellerUsername || "username not shared"})`,
+      "",
+      "Content",
+      args.listingContent,
+    ].join("\n");
+
+    if (!resendApiKey) {
+      throw new Error(
+        "RESEND_API_KEY is not configured in Convex, so the listing report could not be emailed.",
+      );
+    }
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: toEmail,
+        subject: `EverythingUTM listing report: ${args.listingTitle}`,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text().catch(() => "Email failed"));
+    }
+
+    return { ok: true, provider: "resend", reportedAtLocal };
+  },
+});

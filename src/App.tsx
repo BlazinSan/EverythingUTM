@@ -33,6 +33,9 @@ import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import Dock from "./components/Dock";
 import Stepper, { Step } from "./components/Stepper";
+import ChatInputBar from "./components/ChatInputBar";
+import CurtainThemeToggle from "./components/CurtainThemeToggle";
+import FocusRail from "./components/FocusRail";
 import {
   ArrowUpDown,
   BadgeCheck,
@@ -71,9 +74,9 @@ import {
   MessageCircle,
   MessagesSquare,
   Mic,
-  Moon,
   Navigation,
   PackagePlus,
+  Paperclip,
   Pencil,
   Phone,
   Plus,
@@ -88,8 +91,6 @@ import {
   Share2,
   Star,
   Store,
-  Square,
-  Sun,
   ThumbsUp,
   Trash2,
   Upload,
@@ -115,6 +116,7 @@ import type {
   AppSettings,
   BusScheduleDocument,
   CampusLocation,
+  ChatAttachment,
   ChatMessage,
   LanguageCode,
   MarketplaceItem,
@@ -130,7 +132,6 @@ import type {
 } from "./types";
 
 const DomeGallery = lazy(() => import("./components/DomeGallery"));
-const Stack = lazy(() => import("./components/Stack"));
 
 const navItems: NavItem[] = [
   { key: "home", label: "Home", icon: Home },
@@ -218,6 +219,8 @@ const requestSortOptions = [
 ] as const;
 
 const PROFILE_CROP_SIZE = 320;
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_LABEL = "10 MB";
 const LISTING_IMAGE_MAX_SIDE = 640;
 const LISTING_IMAGE_QUALITY = 0.66;
 
@@ -329,7 +332,7 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
     markRead: "Mark read",
     notifications: "Notifications",
     homeEyebrow: "UTM in one place",
-    homeTitle: "Campus command center",
+    homeTitle: "Campus home",
     openMarketplace: "Open marketplace",
     requestDriver: "Request transport",
     listingsLive: "Listings live",
@@ -538,6 +541,16 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
 };
 
 const seedNotifications: NotificationItem[] = [];
+
+type TypingSignal = {
+  id: string;
+  channel: string;
+  name: string;
+  userId: string;
+  avatar?: string;
+  updatedAt: string;
+  deletedAt?: string;
+};
 
 const demoDataIds = {
   marketplace: new Set(["mkt-1", "mkt-2", "mkt-3", "mkt-4", "mkt-5", "mkt-6"]),
@@ -843,6 +856,10 @@ function listingDestinationUrl(itemId: string) {
 }
 
 function elementDestinationPreview(target: Element) {
+  if (window.matchMedia?.("(max-width: 720px)").matches) {
+    return "";
+  }
+
   const link = target.closest<HTMLAnchorElement>("a[href]");
   if (link) {
     return link.href;
@@ -1077,6 +1094,16 @@ function readFileAsDataUrl(file: File) {
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
+}
+
+function isUploadTooLarge(file: File) {
+  return file.size > MAX_UPLOAD_BYTES;
+}
+
+function fileKind(file: File): ChatAttachment["kind"] {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  return "file";
 }
 
 function loadImage(src: string) {
@@ -2049,8 +2076,6 @@ export default function App() {
     "everything-utm:local-identity",
     uid("local"),
   );
-  const shouldSyncOnline = isSignedIn;
-  const onlineReloadKey = user?.id ?? "signed-out";
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [destinationPreview, setDestinationPreview] = useState("");
@@ -2067,14 +2092,10 @@ export default function App() {
   >("everything-utm:notifications", seedNotifications);
   const [profileReviews, setProfileReviews] = useLocalStorageState<
     ProfileReview[]
-  >("everything-utm:profile-reviews", [], {
-    reloadKey: onlineReloadKey,
-    syncOnline: shouldSyncOnline,
-  });
+  >("everything-utm:profile-reviews", []);
   const [marketplace, setMarketplace] = useLocalStorageState<MarketplaceItem[]>(
     "everything-utm:marketplace",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [favourites, setFavourites] = useLocalStorageState<string[]>(
     "everything-utm:favourites",
@@ -2083,28 +2104,25 @@ export default function App() {
   const [messages, setMessages] = useLocalStorageState<ChatMessage[]>(
     "everything-utm:messages",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
+  );
+  const [typingSignals, setTypingSignals] = useLocalStorageState<TypingSignal[]>(
+    "everything-utm:typing-signals",
+    [],
   );
   const [questions, setQuestions] = useLocalStorageState<Question[]>(
     "everything-utm:questions",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [papers, setPapers] = useLocalStorageState<PastPaper[]>(
     "everything-utm:papers",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [appBusDocuments, setAppBusDocuments] = useLocalStorageState<
     BusScheduleDocument[]
-  >("everything-utm:bus-documents", busScheduleDocuments, {
-    reloadKey: onlineReloadKey,
-    syncOnline: shouldSyncOnline,
-  });
+  >("everything-utm:bus-documents", busScheduleDocuments);
   const [requests, setRequests] = useLocalStorageState<ServiceRequest[]>(
     "everything-utm:requests",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const remoteProfileRow = useQuery(
     api.profiles.getCurrent,
@@ -2128,10 +2146,18 @@ export default function App() {
         saved?: boolean;
       }>
     | undefined;
+  const onlineQuestions = useQuery(
+    api.questions.list,
+    isSignedIn ? {} : "skip",
+  ) as Question[] | undefined;
   const upsertCurrentProfile = useMutation(api.profiles.upsertCurrent);
   const deleteCurrentProfileData = useMutation(api.profiles.deleteCurrentData);
   const createBugReport = useMutation(api.bugReports.create);
   const sendBugReportEmail = useAction(api.bugReports.sendEmail);
+  const saveAppPreferences = useMutation(api.appState.upsert);
+  const deleteLegacyHeavyAppState = useMutation(api.appState.deleteLegacyHeavyState);
+  const sendListingReportEmail = useAction(api.bugReports.sendListingReportEmail);
+  const addOnlineQuestion = useMutation(api.questions.add);
   const deleteCurrentClerkUser = useAction(api.accounts.deleteCurrentClerkUser);
 
   const [marketCategory, setMarketCategory] = useState("All");
@@ -2153,6 +2179,7 @@ export default function App() {
   const [replyingToMessage, setReplyingToMessage] =
     useState<ChatMessage | null>(null);
   const [messageImage, setMessageImage] = useState("");
+  const [messageAttachments, setMessageAttachments] = useState<ChatAttachment[]>([]);
   const [messageVoice, setMessageVoice] = useState("");
   const [messageVoiceDuration, setMessageVoiceDuration] = useState(0);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -2218,7 +2245,6 @@ export default function App() {
   const [bannedUsers, setBannedUsers] = useLocalStorageState<string[]>(
     "everything-utm:banned-users",
     [],
-    { reloadKey: onlineReloadKey, syncOnline: shouldSyncOnline },
   );
   const [busDocumentDraft, setBusDocumentDraft] = useState({
     id: "",
@@ -2249,6 +2275,9 @@ export default function App() {
   const voiceChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const lastProfileSetupUserIdRef = useRef<string | null>(null);
+  const notifiedTagIdsRef = useRef(new Set<string>());
+  const preferencesSnapshotRef = useRef("");
+  const legacyCleanupStartedRef = useRef(false);
   const messageSwipeRef = useRef<{ id: string; x: number; y: number } | null>(
     null,
   );
@@ -2307,14 +2336,21 @@ export default function App() {
   );
   const profileDirectory = useMemo(() => {
     const directory = new Map<string, Profile>();
+    const rememberProfile = (key: string, entry: Profile) => {
+      const existing = directory.get(key);
+      if (existing?.profilePicture && !entry.profilePicture) {
+        return;
+      }
+      directory.set(key, entry);
+    };
     const addProfile = (entry: Profile) => {
       if (entry.name.trim()) {
-        directory.set(entry.name, entry);
+        rememberProfile(entry.name, entry);
       }
       const username = sanitizeUsername(entry.username ?? "");
       if (username) {
-        directory.set(username, entry);
-        directory.set(usernameDisplay(username), entry);
+        rememberProfile(username, entry);
+        rememberProfile(usernameDisplay(username), entry);
       }
     };
     if (profileData.name.trim() || profileData.username) {
@@ -2389,7 +2425,12 @@ export default function App() {
       if (!entry.profileSaved) return;
       const username = sanitizeUsername(entry.username ?? "");
       const key = username || entry.name.trim();
-      if (key) entries.set(key, entry);
+      if (!key) return;
+      const existing = entries.get(key);
+      if (existing?.profilePicture && !entry.profilePicture) {
+        return;
+      }
+      entries.set(key, entry);
     };
     add(profileData);
     publicProfiles.forEach(add);
@@ -2421,6 +2462,17 @@ export default function App() {
         .sort(() => Math.random() - 0.5)
         .slice(0, 24),
     [activeMarketplace],
+  );
+  const focusRailListings = useMemo(
+    () =>
+      reelItems.map((item) => ({
+        id: item.id,
+        title: item.title,
+        description: `${formatListingPrice(item.price)} · ${item.condition} · ${item.location}`,
+        imageSrc: item.images?.[0] ?? item.image,
+        meta: item.category,
+      })),
+    [reelItems],
   );
   const recentAdminMessages = useMemo(
     () =>
@@ -2477,12 +2529,80 @@ export default function App() {
     return true;
   }
 
+  function canUseUpload(file: File) {
+    if (!isUploadTooLarge(file)) {
+      return true;
+    }
+    showNotice(`${file.name} is larger than ${MAX_UPLOAD_LABEL}.`, "error");
+    return false;
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = appSettings.theme;
     document.documentElement.lang = appSettings.language;
     document.documentElement.dir =
       appSettings.language === "ar" ? "rtl" : "ltr";
   }, [appSettings.language, appSettings.theme]);
+
+  useEffect(() => {
+    if (!isSignedIn || !convexAuthenticated) {
+      legacyCleanupStartedRef.current = false;
+      return;
+    }
+    const cleanupKey = "everything-utm:legacy-heavy-appstate-cleaned";
+    if (
+      legacyCleanupStartedRef.current ||
+      window.localStorage.getItem(cleanupKey) === "1"
+    ) {
+      return;
+    }
+    legacyCleanupStartedRef.current = true;
+    deleteLegacyHeavyAppState({})
+      .then(() => window.localStorage.setItem(cleanupKey, "1"))
+      .catch(() => {
+        legacyCleanupStartedRef.current = false;
+      });
+  }, [convexAuthenticated, deleteLegacyHeavyAppState, isSignedIn]);
+
+  useEffect(() => {
+    if (!isSignedIn || !convexAuthenticated) {
+      preferencesSnapshotRef.current = "";
+      return;
+    }
+    const preferences = {
+      theme: appSettings.theme,
+      language: appSettings.language,
+    };
+    const snapshot = JSON.stringify(preferences);
+    const scopedSnapshot = `${currentUserId}:${snapshot}`;
+    if (
+      !preferencesSnapshotRef.current ||
+      !preferencesSnapshotRef.current.startsWith(`${currentUserId}:`)
+    ) {
+      preferencesSnapshotRef.current = scopedSnapshot;
+      return;
+    }
+    if (preferencesSnapshotRef.current === scopedSnapshot) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      preferencesSnapshotRef.current = scopedSnapshot;
+      saveAppPreferences({
+        storageKey: `everything-utm:preferences:${currentUserId}`,
+        data: preferences,
+      }).catch(() => undefined);
+    }, 1000);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    appSettings.language,
+    appSettings.theme,
+    convexAuthenticated,
+    currentUserId,
+    isSignedIn,
+    saveAppPreferences,
+  ]);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -2718,16 +2838,124 @@ export default function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (!shouldGuardProfileDraft) {
+    if (!onlineQuestions) {
       return;
     }
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [shouldGuardProfileDraft]);
+    setQuestions((current) => {
+      const merged = new Map(current.map((question) => [question.id, question]));
+      onlineQuestions.forEach((question) => {
+        const existing = merged.get(question.id);
+        merged.set(question.id, {
+          ...question,
+          answers:
+            question.answers?.length || !existing
+              ? question.answers
+              : existing.answers,
+        });
+      });
+      const next = Array.from(merged.values()).sort(
+        (a, b) =>
+          new Date(b.createdAt ?? "1970-01-01").getTime() -
+          new Date(a.createdAt ?? "1970-01-01").getTime(),
+      );
+      return sameStoredState(next, current) ? current : next;
+    });
+  }, [onlineQuestions, setQuestions]);
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      return;
+    }
+    const hasPendingMessage =
+      Boolean(messageDraft.trim()) ||
+      messageAttachments.length > 0 ||
+      Boolean(messageVoice);
+    const timer = window.setTimeout(() => {
+      setTypingSignals((current) => {
+        const freshSignals = current.filter(
+          (signal) =>
+            signal.userId !== currentUserId &&
+            Date.now() - new Date(signal.updatedAt).getTime() < 8000,
+        );
+        if (!hasPendingMessage) {
+          return freshSignals;
+        }
+        return [
+          {
+            id: `typing-${currentUserId}`,
+            channel: activeChannel,
+            name: currentDisplayName,
+            userId: currentUserId,
+            avatar: profileData.profilePicture,
+            updatedAt: new Date().toISOString(),
+          },
+          ...freshSignals,
+        ].slice(0, 30);
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeChannel,
+    currentDisplayName,
+    currentUserId,
+    isSignedIn,
+    messageAttachments.length,
+    messageDraft,
+    messageVoice,
+    profileData.profilePicture,
+    setTypingSignals,
+  ]);
+
+  useEffect(() => {
+    const usernameToken = sanitizeUsername(profileData.username ?? "");
+    const nameToken = sanitizeUsername(profileData.name);
+    const firstNameToken = sanitizeUsername(profileData.name.split(/\s+/)[0] ?? "");
+    const ownTokens = new Set(
+      [usernameToken, nameToken, firstNameToken].filter(Boolean),
+    );
+    if (!ownTokens.size) {
+      return;
+    }
+
+    messages.forEach((message) => {
+      if (
+        !message.content ||
+        isCurrentUserEntity(message.authorId, message.author) ||
+        notifiedTagIdsRef.current.has(message.id)
+      ) {
+        return;
+      }
+      const mentions = Array.from(
+        message.content.toLowerCase().matchAll(/@([a-z0-9_]+)/g),
+      ).map((match) => match[1]);
+      const wasTagged = mentions.some((mention) => ownTokens.has(mention));
+      if (!wasTagged) {
+        return;
+      }
+      notifiedTagIdsRef.current.add(message.id);
+      addNotification(
+        `${message.author} mentioned you`,
+        message.content.slice(0, 120),
+        "community",
+      );
+      if (!("Notification" in window)) {
+        return;
+      }
+      const notify = () =>
+        new Notification("EverythingUTM mention", {
+          body: `${message.author}: ${message.content.slice(0, 120)}`,
+          icon: "/everythingutm-icon.png",
+          tag: `everythingutm-${message.id}`,
+        });
+      if (Notification.permission === "granted") {
+        notify();
+      } else if (Notification.permission === "default") {
+        Notification.requestPermission().then((permission) => {
+          if (permission === "granted") notify();
+        });
+      }
+    });
+  }, [messages, profileData.name, profileData.username]);
 
   const favouriteItems = useMemo(
     () =>
@@ -2831,6 +3059,25 @@ export default function App() {
         ),
     [activeChannel, messages, search],
   );
+  const typingUsers = useMemo(() => {
+    const now = Date.now();
+    const seen = new Set<string>();
+    return typingSignals
+      .filter(
+        (signal) =>
+          signal.channel === activeChannel &&
+          signal.userId !== currentUserId &&
+          !signal.deletedAt &&
+          now - new Date(signal.updatedAt).getTime() < 6000,
+      )
+      .filter((signal) => {
+        const key = signal.userId || signal.name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 3);
+  }, [activeChannel, currentUserId, typingSignals]);
 
   const visibleQuestions = useMemo(() => {
     const filtered = questions.filter((question) => {
@@ -3255,6 +3502,13 @@ export default function App() {
     setNotifications((current) => [item, ...current].slice(0, 40));
   }
 
+  function requestMentionNotificationPermission() {
+    if (!("Notification" in window) || Notification.permission !== "default") {
+      return;
+    }
+    Notification.requestPermission().catch(() => undefined);
+  }
+
   function confirmDiscardProfileDraft() {
     if (!shouldGuardProfileDraft) {
       return true;
@@ -3494,10 +3748,11 @@ export default function App() {
   }
 
   async function updateListingImages(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
+    const files = Array.from(event.target.files ?? []).filter(canUseUpload);
     const images = await Promise.all(
       files.slice(0, 6).map(readCompressedListingImage),
     );
+    event.target.value = "";
     setListingImages(images);
     if (images.length) {
       showNotice(`${images.length} listing photo${images.length === 1 ? "" : "s"} ready`);
@@ -3505,19 +3760,36 @@ export default function App() {
   }
 
   async function updateListingEditImages(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
+    const files = Array.from(event.target.files ?? []).filter(canUseUpload);
     const images = await Promise.all(
       files.slice(0, 6).map(readCompressedListingImage),
     );
+    event.target.value = "";
     setListingEditImages(images);
     if (images.length) {
       showNotice(`${images.length} updated photo${images.length === 1 ? "" : "s"} ready`);
     }
   }
 
-  async function updateMessageImage(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    setMessageImage(file ? await readFileAsDataUrl(file) : "");
+  async function updateMessageAttachments(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter(canUseUpload);
+    if (!files.length) {
+      event.target.value = "";
+      return;
+    }
+    const attachments = await Promise.all(
+      files.slice(0, 6).map(async (file) => ({
+        id: uid("att"),
+        name: sanitizePlainText(file.name, 90) || "Attachment",
+        kind: fileKind(file),
+        type: file.type || "application/octet-stream",
+        url: await readFileAsDataUrl(file),
+        size: file.size,
+      })),
+    );
+    setMessageAttachments((current) => [...current, ...attachments].slice(0, 6));
+    event.target.value = "";
+    showNotice(`${attachments.length} attachment${attachments.length === 1 ? "" : "s"} ready`);
   }
 
   async function toggleVoiceRecording() {
@@ -3553,6 +3825,11 @@ export default function App() {
           setIsRecordingVoice(false);
           return;
         }
+        if (blob.size > MAX_UPLOAD_BYTES) {
+          showNotice(`Voice message is larger than ${MAX_UPLOAD_LABEL}.`, "error");
+          setIsRecordingVoice(false);
+          return;
+        }
         const reader = new FileReader();
         reader.onload = () => {
           setMessageVoice(String(reader.result));
@@ -3580,7 +3857,15 @@ export default function App() {
 
   async function updateQuestionImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    setQuestionImage(file ? await readFileAsDataUrl(file) : "");
+    event.target.value = "";
+    if (!file) {
+      setQuestionImage("");
+      return;
+    }
+    if (!canUseUpload(file)) {
+      return;
+    }
+    setQuestionImage(await readFileAsDataUrl(file));
   }
 
   function openProfile(name: string) {
@@ -3819,9 +4104,42 @@ export default function App() {
     }
   }
 
-  function reportListing(item: MarketplaceItem) {
-    showNotice(`Report sent for ${item.title}`);
-    addNotification("Product report received", `${item.title} was flagged for review.`, "marketplace");
+  async function reportListing(item: MarketplaceItem) {
+    const sellerProfile = getProfile(item.seller);
+    try {
+      await withTimeout(
+        sendListingReportEmail({
+          listingUrl: listingShareUrl(item.id),
+          listingTitle: item.title,
+          listingContent: [
+            item.description,
+            item.tags.length ? `Tags: ${item.tags.map((tag) => `#${tag}`).join(" ")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          listingCategory: item.category,
+          listingPrice: formatListingPrice(item.price),
+          sellerName: item.seller,
+          sellerUsername: usernameDisplay(sellerProfile.username) || "Not shared",
+          reporterName: currentDisplayName,
+          reporterUsername: usernameDisplay(profileData.username) || "Not shared",
+          postedAt: formatDate(item.createdAt),
+        }),
+        10_000,
+        "Listing report email timed out",
+      );
+      showNotice(`Report sent for ${item.title}`);
+      addNotification(
+        "Product report received",
+        `${item.title} was emailed to the owner for review.`,
+        "marketplace",
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Listing report could not be emailed",
+        "error",
+      );
+    }
   }
 
   function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
@@ -3830,8 +4148,8 @@ export default function App() {
       return;
     }
     const cleanContent = sanitizeLongText(messageDraft, 1000);
-    if (!cleanContent && !messageImage && !messageVoice) {
-      showNotice("Message needs text, a picture, or a voice recording", "error");
+    if (!cleanContent && !messageImage && !messageVoice && !messageAttachments.length) {
+      showNotice("Message needs text, media, a file, or a voice recording", "error");
       return;
     }
     const message: ChatMessage = {
@@ -3842,6 +4160,7 @@ export default function App() {
       authorAvatar: profileData.profilePicture,
       content: cleanContent,
       image: messageImage || undefined,
+      attachments: messageAttachments.length ? messageAttachments : undefined,
       voiceUrl: messageVoice || undefined,
       voiceDuration: messageVoice ? messageVoiceDuration : undefined,
       replyTo: replyingToMessage
@@ -3850,6 +4169,9 @@ export default function App() {
             author: replyingToMessage.author,
             content:
               replyingToMessage.content ||
+              (replyingToMessage.attachments?.length
+                ? `${replyingToMessage.attachments.length} attachment${replyingToMessage.attachments.length === 1 ? "" : "s"}`
+                : "") ||
               (replyingToMessage.voiceUrl
                 ? "Voice message"
                 : replyingToMessage.image
@@ -3862,6 +4184,7 @@ export default function App() {
     setMessages((current) => [...current, message]);
     setMessageDraft("");
     setMessageImage("");
+    setMessageAttachments([]);
     setReplyingToMessage(null);
     clearVoiceMessage();
     addNotification("Message sent", `Posted to ${activeChannel}.`, "community");
@@ -3984,6 +4307,12 @@ export default function App() {
     };
 
     setQuestions((current) => [question, ...current]);
+    addOnlineQuestion({
+      question: toConvexJson({
+        ...question,
+        image: "",
+      }),
+    }).catch(() => undefined);
     setQuestionDraft(initialQuestion);
     setQuestionImage("");
     showNotice("Question posted");
@@ -4314,6 +4643,10 @@ export default function App() {
   async function updateBusDocumentFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!canUseUpload(file)) {
+      event.target.value = "";
+      return;
+    }
     const dataUrl = await readFileAsDataUrl(file);
     setBusDocumentDraft((draft) => ({
       ...draft,
@@ -4769,13 +5102,21 @@ export default function App() {
   }
 
   function updatePaperFile(event: ChangeEvent<HTMLInputElement>) {
-    setPaperFile(event.target.files?.[0] ?? null);
+    const file = event.target.files?.[0] ?? null;
+    if (file && !canUseUpload(file)) {
+      event.target.value = "";
+      return;
+    }
+    setPaperFile(file);
   }
 
   function updateProfilePicture(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) {
+      return;
+    }
+    if (!canUseUpload(file)) {
       return;
     }
     const reader = new FileReader();
@@ -5521,24 +5862,39 @@ export default function App() {
             </div>
 
             <div className="metric-grid">
-              <article className="metric-card">
+              <button
+                className="metric-card metric-button"
+                data-module-key="marketplace"
+                type="button"
+                onClick={openMarketplacePage}
+              >
                 <Store size={20} aria-hidden="true" />
                 <span>{t("listingsLive")}</span>
                 <strong>{activeMarketplace.length}</strong>
                 <small>Marketplace posts</small>
-              </article>
-              <article className="metric-card">
+              </button>
+              <button
+                className="metric-card metric-button"
+                data-module-key="map"
+                type="button"
+                onClick={() => navigateToModule("map")}
+              >
                 <MapPinned size={20} aria-hidden="true" />
                 <span>{t("campusPlaces")}</span>
                 <strong>{campusLocations.length}</strong>
                 <small>{campusCategories.length - 1} categories</small>
-              </article>
-              <article className="metric-card">
+              </button>
+              <button
+                className="metric-card metric-button"
+                data-module-key="requests"
+                type="button"
+                onClick={() => navigateToModule("requests")}
+              >
                 <Route size={20} aria-hidden="true" />
                 <span>{t("openRequests")}</span>
                 <strong>{openRequestCount}</strong>
                 <small>Rides and delivery</small>
-              </article>
+              </button>
               <button
                 className="metric-card metric-button"
                 data-module-key="marketplace"
@@ -6864,6 +7220,28 @@ export default function App() {
                             <img src={message.image} alt="" />
                           </button>
                         )}
+                        {message.attachments?.length ? (
+                          <div className="message-attachments">
+                            {message.attachments.map((attachment) => (
+                              <button
+                                className={`message-attachment is-${attachment.kind}`}
+                                key={attachment.id}
+                                type="button"
+                                onClick={() => window.open(attachment.url, "_blank")}
+                              >
+                                {attachment.kind === "image" ? (
+                                  <img src={attachment.url} alt="" loading="lazy" />
+                                ) : attachment.kind === "video" ? (
+                                  <video src={attachment.url} muted playsInline />
+                                ) : (
+                                  <Paperclip size={18} aria-hidden="true" />
+                                )}
+                                <span>{attachment.name}</span>
+                                <small>{(attachment.size / 1024 / 1024).toFixed(2)} MB</small>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                         {message.voiceUrl && (
                           <div className="voice-message">
                             <audio controls src={message.voiceUrl}>
@@ -6943,86 +7321,83 @@ export default function App() {
                 )}
               </div>
 
-              <form className="chat-composer" onSubmit={handleChatSubmit}>
-                {replyingToMessage && (
-                  <div className="reply-composer">
-                    <div>
+              {typingUsers.length > 0 && (
+                <div className="typing-indicator" aria-live="polite">
+                  <PersonAvatar
+                    image={typingUsers[0].avatar}
+                    name={typingUsers[0].name}
+                    size={26}
+                  />
+                  <span>
+                    {typingUsers.map((entry) => entry.name).join(", ")} typing
+                  </span>
+                  <i />
+                  <i />
+                  <i />
+                </div>
+              )}
+
+              <ChatInputBar
+                value={messageDraft}
+                onChange={(value) => {
+                  clearActionFocus();
+                  if (value.includes("@")) {
+                    requestMentionNotificationPermission();
+                  }
+                  setMessageDraft(value);
+                }}
+                onSubmit={handleChatSubmit}
+                placeholder="Type a message"
+                attachments={messageAttachments}
+                onAttach={updateMessageAttachments}
+                onRemoveAttachment={(id) =>
+                  setMessageAttachments((current) =>
+                    current.filter((attachment) => attachment.id !== id),
+                  )
+                }
+                replyPreview={
+                  replyingToMessage ? (
+                    <>
                       <span>Replying to {replyingToMessage.author}</span>
                       <p>
                         {replyingToMessage.content ||
-                          (replyingToMessage.voiceUrl
-                            ? "Voice message"
-                            : replyingToMessage.image
-                              ? "Photo"
-                              : "Message")}
+                          (replyingToMessage.attachments?.length
+                            ? `${replyingToMessage.attachments.length} attachment${replyingToMessage.attachments.length === 1 ? "" : "s"}`
+                            : replyingToMessage.voiceUrl
+                              ? "Voice message"
+                              : replyingToMessage.image
+                                ? "Photo"
+                                : "Message")}
                       </p>
-                    </div>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      onClick={() => setReplyingToMessage(null)}
-                      aria-label="Cancel reply"
-                    >
-                      <X size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                )}
-                <label className="icon-button attachment-button" title="Add picture">
-                  <ImagePlus size={17} aria-hidden="true" />
-                  <input type="file" accept="image/*" onChange={updateMessageImage} />
-                </label>
-                <button
-                  className={`icon-button voice-button ${
-                    isRecordingVoice ? "is-recording" : ""
-                  }`}
-                  type="button"
-                  title={isRecordingVoice ? "Stop recording" : "Record voice message"}
-                  onClick={toggleVoiceRecording}
-                >
-                  {isRecordingVoice ? (
-                    <Square size={15} aria-hidden="true" />
-                  ) : (
-                    <Mic size={17} aria-hidden="true" />
-                  )}
-                </button>
-                <input
-                  value={messageDraft}
-                  onFocus={clearActionFocus}
-                  onChange={(event) => setMessageDraft(event.target.value)}
-                  placeholder={
-                    messageVoice
-                      ? `Voice ready for ${activeChannel}`
-                      : messageImage
-                        ? `Picture ready for ${activeChannel}`
-                      : `Message ${activeChannel}`
-                  }
-                />
-                {messageVoice && (
-                  <div className="voice-preview">
-                    <audio controls src={messageVoice}>
-                      Voice preview
-                    </audio>
-                    <div className="voice-bars" aria-hidden="true">
-                      {Array.from({ length: 16 }).map((_, index) => (
-                        <span key={index} style={{ "--bar": `${(index % 5) + 3}` } as CSSProperties} />
-                      ))}
-                    </div>
-                    <button
-                      className="ghost-button mini-button voice-ready-chip"
-                      type="button"
-                      onClick={clearVoiceMessage}
-                    >
-                      <Mic size={14} aria-hidden="true" />
-                      {messageVoiceDuration}s
-                      <X size={13} aria-hidden="true" />
-                    </button>
-                  </div>
-                )}
-                <button className="primary-button" type="submit">
-                  <Send size={17} aria-hidden="true" />
-                  {t("send")}
-                </button>
-              </form>
+                    </>
+                  ) : undefined
+                }
+                onCancelReply={() => setReplyingToMessage(null)}
+                voicePreview={
+                  messageVoice ? (
+                    <>
+                      <audio controls src={messageVoice}>
+                        Voice preview
+                      </audio>
+                      <div className="voice-bars" aria-hidden="true">
+                        {Array.from({ length: 16 }).map((_, index) => (
+                          <span
+                            key={index}
+                            style={{ "--bar": `${(index % 5) + 3}` } as CSSProperties}
+                          />
+                        ))}
+                      </div>
+                      <span className="voice-ready-chip">
+                        <Mic size={14} aria-hidden="true" />
+                        {messageVoiceDuration}s
+                      </span>
+                    </>
+                  ) : undefined
+                }
+                onClearVoice={clearVoiceMessage}
+                isRecordingVoice={isRecordingVoice}
+                onToggleVoice={toggleVoiceRecording}
+              />
             </section>
           </section>
         )}
@@ -8406,7 +8781,7 @@ export default function App() {
             <div className="module-heading">
               <div>
                 <p className="eyebrow">Marketplace discovery</p>
-                <h1>Marketplace Reels</h1>
+                <h1>Featured listings</h1>
               </div>
               <button
                 className="secondary-button"
@@ -8427,35 +8802,14 @@ export default function App() {
               />
             ) : (
               <div className="reels-layout">
-                <section className="panel reels-stage">
-                  <div className="reel-stack-shell">
-                    <Suspense fallback={<span className="skeleton-box skeleton-card" />}>
-                      <Stack
-                        randomRotation
-                        sensitivity={150}
-                        cards={reelItems.map((item) => (
-                          <button
-                            className={`reel-card ${item.sold ? "is-sold" : ""}`}
-                            data-listing-id={item.id}
-                            key={item.id}
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSelectedListingId(item.id);
-                            }}
-                          >
-                            <img src={item.images?.[0] ?? item.image} alt="" />
-                            <span>{item.category}</span>
-                            <strong>{item.title}</strong>
-                            <p>{formatListingPrice(item.price)} · {item.condition}</p>
-                          </button>
-                        ))}
-                        autoplay
-                        autoplayDelay={2600}
-                        pauseOnHover
-                      />
-                    </Suspense>
-                  </div>
+                <section className="panel reels-stage focus-rail-panel">
+                  <FocusRail
+                    items={focusRailListings}
+                    loop
+                    autoPlay={false}
+                    onOpen={(item) => setSelectedListingId(item.id)}
+                    onExplore={openMarketplacePage}
+                  />
                 </section>
               </div>
             )}
@@ -8881,34 +9235,15 @@ export default function App() {
                           <strong>Appearance</strong>
                           <span>Switch the app theme before finishing setup.</span>
                         </div>
-                        <div className="segmented-control setup-theme-buttons">
-                          <button
-                            className={appSettings.theme === "light" ? "is-active" : ""}
-                            type="button"
-                            onClick={() =>
-                              setSettings((current) => ({
-                                ...current,
-                                theme: "light",
-                              }))
-                            }
-                          >
-                            <Sun size={16} aria-hidden="true" />
-                            {t("lightMode")}
-                          </button>
-                          <button
-                            className={appSettings.theme === "dark" ? "is-active" : ""}
-                            type="button"
-                            onClick={() =>
-                              setSettings((current) => ({
-                                ...current,
-                                theme: "dark",
-                              }))
-                            }
-                          >
-                            <Moon size={16} aria-hidden="true" />
-                            {t("darkMode")}
-                          </button>
-                        </div>
+                        <CurtainThemeToggle
+                          theme={appSettings.theme}
+                          onChange={(theme) =>
+                            setSettings((current) => ({ ...current, theme }))
+                          }
+                          lightLabel={t("lightMode")}
+                          darkLabel={t("darkMode")}
+                          compact
+                        />
                       </div>
                       <Stepper
                         initialStep={1}
@@ -9411,28 +9746,14 @@ export default function App() {
                   <h2>{t("appearance")}</h2>
                   <Settings size={18} aria-hidden="true" />
                 </div>
-                <div className="segmented-control">
-                  <button
-                    className={appSettings.theme === "light" ? "is-active" : ""}
-                    type="button"
-                    onClick={() =>
-                      setSettings((current) => ({ ...current, theme: "light" }))
-                    }
-                  >
-                    <Sun size={16} aria-hidden="true" />
-                    {t("lightMode")}
-                  </button>
-                  <button
-                    className={appSettings.theme === "dark" ? "is-active" : ""}
-                    type="button"
-                    onClick={() =>
-                      setSettings((current) => ({ ...current, theme: "dark" }))
-                    }
-                  >
-                    <Moon size={16} aria-hidden="true" />
-                    {t("darkMode")}
-                  </button>
-                </div>
+                <CurtainThemeToggle
+                  theme={appSettings.theme}
+                  onChange={(theme) =>
+                    setSettings((current) => ({ ...current, theme }))
+                  }
+                  lightLabel={t("lightMode")}
+                  darkLabel={t("darkMode")}
+                />
               </section>
 
               <section className="panel">

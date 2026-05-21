@@ -1,0 +1,74 @@
+.curtain-theme-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  pointer-events: none;
+  background: var(--bg);
+  transform: scaleY(0);
+  transform-origin: top;
+}
+
+.curtain-theme-overlay.is-dark {
+  background: #0f1117;
+}
+
+.curtain-theme-overlay.is-light {
+  background: #f7efe6;
+}
+
+.curtain-theme-overlay.is-falling {
+  transition: transform 520ms cubic-bezier(0.76, 0, 0.24, 1);
+  transform: scaleY(1);
+}
+
+.curtain-theme-overlay.is-rising {
+  transition: transform 600ms cubic-bezier(0.76, 0, 0.24, 1);
+  transform: scaleY(0);
+}
+
+.curtain-theme-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+  min-height: 48px;
+  padding: 4px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.curtain-theme-toggle.is-compact {
+  min-height: 42px;
+}
+
+.curtain-theme-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-weight: 900;
+  border-radius: 8px;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.curtain-theme-option.is-active {
+  color: #fff;
+  background: var(--utm-red);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 720px) {
+  .curtain-theme-option {
+    font-size: 12px;
+    padding-inline: 6px;
+  }
+}

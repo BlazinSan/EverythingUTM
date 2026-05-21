@@ -12,6 +12,7 @@ import type * as accounts from "../accounts.js";
 import type * as appState from "../appState.js";
 import type * as bugReports from "../bugReports.js";
 import type * as profiles from "../profiles.js";
+import type * as questions from "../questions.js";
 
 import type {
   ApiFromModules,
@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
   appState: typeof appState;
   bugReports: typeof bugReports;
   profiles: typeof profiles;
+  questions: typeof questions;
 }>;
 
 /**

@@ -38,4 +38,11 @@ export default defineSchema({
     emailed: v.boolean(),
     emailError: v.optional(v.string()),
   }).index("by_userId", ["userId"]),
+
+  questions: defineTable({
+    questionId: v.string(),
+    question: v.any(),
+    createdAt: v.number(),
+    createdBy: v.string(),
+  }).index("by_questionId", ["questionId"]),
 });
