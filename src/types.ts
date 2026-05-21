@@ -47,6 +47,8 @@ export type MarketplaceItem = {
   createdAt: string;
   sold?: boolean;
   soldAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
 };
 
 export type CampusLocation = {

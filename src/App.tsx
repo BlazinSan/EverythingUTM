@@ -250,6 +250,7 @@ const moduleSlugs: Record<ModuleKey, string> = {
 const moduleKeysBySlug = Object.fromEntries(
   Object.entries(moduleSlugs).map(([key, slug]) => [slug, key]),
 ) as Record<string, ModuleKey>;
+const moduleKeySet = new Set(Object.keys(moduleSlugs));
 
 const regularBusTimes = [
   "07:00",
@@ -364,7 +365,7 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
     darkMode: "Dark mode",
     language: "Language",
     privacySafety: "Privacy & safety",
-    terms: "Terms & conditions",
+    terms: "Privacy Policy",
     helpCenter: "Help center",
     reportBug: "Report bug",
     deleteAccount: "Delete account",
@@ -417,7 +418,7 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
     darkMode: "Mod gelap",
     language: "Bahasa",
     privacySafety: "Privasi & keselamatan",
-    terms: "Terma & syarat",
+    terms: "Dasar Privasi",
     helpCenter: "Pusat bantuan",
     reportBug: "Lapor pepijat",
     deleteAccount: "Padam akaun",
@@ -470,7 +471,7 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
     darkMode: "الوضع الداكن",
     language: "اللغة",
     privacySafety: "الخصوصية والسلامة",
-    terms: "الشروط والأحكام",
+    terms: "سياسة الخصوصية",
     helpCenter: "مركز المساعدة",
     reportBug: "الإبلاغ عن خطأ",
     deleteAccount: "حذف الحساب",
@@ -523,7 +524,7 @@ const uiText: Record<LanguageCode, Record<string, string>> = {
     darkMode: "深色模式",
     language: "语言",
     privacySafety: "隐私与安全",
-    terms: "条款与条件",
+    terms: "隐私政策",
     helpCenter: "帮助中心",
     reportBug: "报告问题",
     deleteAccount: "删除账号",
@@ -731,6 +732,7 @@ type SearchResult = {
   module: ModuleKey;
   title: string;
   detail: string;
+  previewUrl?: string;
   action: () => void;
 };
 
@@ -809,6 +811,85 @@ function moduleFromHash(hash = window.location.hash) {
 
 function hashForModule(module: ModuleKey) {
   return `#${moduleSlugs[module]}`;
+}
+
+function isModuleKey(value: string): value is ModuleKey {
+  return moduleKeySet.has(value);
+}
+
+function appUrlForHash(hash: string) {
+  const url = new URL(window.location.href);
+  url.pathname = "/";
+  url.search = "";
+  url.hash = hash;
+  return url.toString();
+}
+
+function moduleDestinationUrl(module: ModuleKey) {
+  return appUrlForHash(hashForModule(module));
+}
+
+function usernameDestinationUrl(username: string) {
+  return appUrlForHash(hashForUsername(username));
+}
+
+function listingDestinationUrl(itemId: string) {
+  const url = new URL(window.location.href);
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("listing", itemId);
+  return url.toString();
+}
+
+function elementDestinationPreview(target: Element) {
+  const link = target.closest<HTMLAnchorElement>("a[href]");
+  if (link) {
+    return link.href;
+  }
+
+  const nearestInteractive = target.closest<HTMLElement>(
+    "button, [role='button']",
+  );
+  const previewHost = target.closest<HTMLElement>(
+    "[data-preview-url], [data-module-key], [data-listing-id], [data-profile-username]",
+  );
+  if (!previewHost) {
+    return nearestInteractive ? window.location.href : "";
+  }
+
+  if (
+    nearestInteractive &&
+    nearestInteractive !== previewHost &&
+    !nearestInteractive.dataset.previewUrl &&
+    !nearestInteractive.dataset.moduleKey &&
+    !nearestInteractive.dataset.listingId &&
+    !nearestInteractive.dataset.profileUsername
+  ) {
+    return window.location.href;
+  }
+
+  const explicitUrl = previewHost.dataset.previewUrl;
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+
+  const moduleKey = previewHost.dataset.moduleKey;
+  if (moduleKey && isModuleKey(moduleKey)) {
+    return moduleDestinationUrl(moduleKey);
+  }
+
+  const listingId = previewHost.dataset.listingId;
+  if (listingId) {
+    return listingDestinationUrl(listingId);
+  }
+
+  const username = previewHost.dataset.profileUsername;
+  if (username) {
+    return usernameDestinationUrl(username);
+  }
+
+  return nearestInteractive ? window.location.href : "";
 }
 
 function clearEverythingUtmStorage() {
@@ -1049,11 +1130,7 @@ async function imageToShareFile(imageUrl: string, fileName: string) {
 }
 
 function listingShareUrl(itemId: string) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("listing", itemId);
-  return url.toString();
+  return listingDestinationUrl(itemId);
 }
 
 function listingShareText(item: MarketplaceItem) {
@@ -1508,6 +1585,14 @@ function itemId(value: unknown) {
     : "";
 }
 
+function isDeletedRecord(value: unknown) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    ("deletedAt" in value || "adminDeletedAt" in value)
+  );
+}
+
 function sanitizeStoredState<T>(key: string, value: T): T {
   if (key === "everything-utm:profile") {
     return isDemoProfile(value as Partial<Profile>)
@@ -1603,19 +1688,34 @@ function mergeOnlineAndLocalState<T>(key: string, onlineValue: T, localValue: T)
   const local = sanitizeStoredState(key, localValue);
   if (Array.isArray(online) && Array.isArray(local)) {
     const merged = new Map<string, unknown>();
+    const deletedIds = new Set<string>();
     online.forEach((item) => {
       const id = itemId(item);
       if (id) {
+        if (isDeletedRecord(item)) {
+          deletedIds.add(id);
+          merged.delete(id);
+          return;
+        }
         merged.set(id, item);
       }
     });
     local.forEach((item) => {
       const id = itemId(item);
-      if (id && !merged.has(id)) {
-        merged.set(id, item);
+      if (!id) {
+        return;
       }
+      if (isDeletedRecord(item)) {
+        deletedIds.add(id);
+        merged.delete(id);
+        return;
+      }
+      if (deletedIds.has(id)) {
+        return;
+      }
+      merged.set(id, item);
     });
-    return Array.from(merged.values()) as T;
+    return Array.from(merged.values()).filter((item) => !isDeletedRecord(item)) as T;
   }
   return online ?? local;
 }
@@ -1953,6 +2053,7 @@ export default function App() {
   const onlineReloadKey = user?.id ?? "signed-out";
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [destinationPreview, setDestinationPreview] = useState("");
   const [profile, setProfile] = useLocalStorageState<Profile>(
     "everything-utm:profile",
     appUser,
@@ -2200,6 +2301,10 @@ export default function App() {
       (ownerMatricNumber && profileData.matricNumber === ownerMatricNumber),
   );
   const activeModuleIndex = navItems.findIndex((item) => item.key === activeModule);
+  const activeMarketplace = useMemo(
+    () => marketplace.filter((item) => !item.deletedAt),
+    [marketplace],
+  );
   const profileDirectory = useMemo(() => {
     const directory = new Map<string, Profile>();
     const addProfile = (entry: Profile) => {
@@ -2251,7 +2356,7 @@ export default function App() {
   const selectedProfileReviews = profileReviews.filter(
     (review) => review.profileName === selectedProfile.name,
   );
-  const selectedProfileListings = marketplace.filter(
+  const selectedProfileListings = activeMarketplace.filter(
     (item) => item.seller === selectedProfile.name,
   );
   const selectedProfileQuestions = questions.filter(
@@ -2311,11 +2416,11 @@ export default function App() {
   );
   const reelItems = useMemo(
     () =>
-      [...marketplace]
+      [...activeMarketplace]
         .filter((item) => !item.sold)
         .sort(() => Math.random() - 0.5)
         .slice(0, 24),
-    [marketplace],
+    [activeMarketplace],
   );
   const recentAdminMessages = useMemo(
     () =>
@@ -2571,11 +2676,11 @@ export default function App() {
 
   useEffect(() => {
     const listingId = new URLSearchParams(window.location.search).get("listing");
-    if (listingId && marketplace.some((item) => item.id === listingId)) {
+    if (listingId && activeMarketplace.some((item) => item.id === listingId)) {
       setSelectedListingId(listingId);
       navigateToModule("marketplace");
     }
-  }, []);
+  }, [activeMarketplace]);
 
   useEffect(() => {
     setProfile((current) => {
@@ -2627,9 +2732,9 @@ export default function App() {
   const favouriteItems = useMemo(
     () =>
       favourites
-        .map((itemId) => marketplace.find((listing) => listing.id === itemId))
+        .map((itemId) => activeMarketplace.find((listing) => listing.id === itemId))
         .filter((item): item is MarketplaceItem => Boolean(item)),
-    [favourites, marketplace],
+    [activeMarketplace, favourites],
   );
 
   const listingLocationSuggestions = useMemo(() => {
@@ -2646,7 +2751,7 @@ export default function App() {
   }, [listingDraft.location]);
 
   const visibleMarketplace = useMemo(() => {
-    const filtered = marketplace.filter((item) => {
+    const filtered = activeMarketplace.filter((item) => {
       const inCategory =
         marketCategory === "All" ||
         (marketCategory === "Free" && item.price <= 0) ||
@@ -2669,7 +2774,11 @@ export default function App() {
       }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [favourites, marketCategory, marketSort, marketplace, search]);
+  }, [activeMarketplace, favourites, marketCategory, marketSort, search]);
+  const marketplaceListingsHiddenByFilters =
+    activeMarketplace.length > 0 &&
+    visibleMarketplace.length === 0 &&
+    (marketCategory !== "All" || Boolean(search));
 
   const visibleLocations = useMemo(() => {
     return campusLocations.filter((location) => {
@@ -2781,10 +2890,10 @@ export default function App() {
   );
 
   const selectedListing = selectedListingId
-    ? marketplace.find((item) => item.id === selectedListingId) ?? null
+    ? activeMarketplace.find((item) => item.id === selectedListingId) ?? null
     : null;
   const viewerListing = imageViewerListingId
-    ? marketplace.find((item) => item.id === imageViewerListingId) ?? null
+    ? activeMarketplace.find((item) => item.id === imageViewerListingId) ?? null
     : null;
   const viewerImages = viewerListing
     ? viewerListing.images?.length
@@ -2912,6 +3021,7 @@ export default function App() {
           module: "profile",
           title: profile.name || usernameDisplay(username),
           detail: `User profile · ${usernameDisplay(username)}`,
+          previewUrl: usernameDestinationUrl(username),
           action: () => {
             setSelectedProfileName(usernameDisplay(username));
             setProfileDraft(emptyProfile(profile));
@@ -2922,7 +3032,7 @@ export default function App() {
       }
     });
 
-    marketplace.forEach((item) => {
+    activeMarketplace.forEach((item) => {
       const haystack = [
         item.title,
         item.seller,
@@ -2939,6 +3049,7 @@ export default function App() {
           module: "marketplace",
           title: item.title,
           detail: `Marketplace · ${item.location}`,
+          previewUrl: listingDestinationUrl(item.id),
           action: () => {
             setMarketCategory(item.category);
             navigateToModule("marketplace");
@@ -2963,6 +3074,7 @@ export default function App() {
           module: "map",
           title: location.name,
           detail: `Map · ${location.area}`,
+          previewUrl: moduleDestinationUrl("map"),
           action: () => {
             setMapCategory(location.category);
             setSelectedLocationId(location.id);
@@ -2982,6 +3094,7 @@ export default function App() {
           module: "community",
           title: message.content,
           detail: `Chat · ${message.channel}`,
+          previewUrl: moduleDestinationUrl("community"),
           action: () => {
             setActiveChannel(message.channel);
             navigateToModule("community");
@@ -3006,6 +3119,7 @@ export default function App() {
           module: "qa",
           title: question.title,
           detail: `Q&A · ${question.answers.length} answers`,
+          previewUrl: moduleDestinationUrl("qa"),
           action: () => navigateToModule("qa"),
         });
       }
@@ -3027,6 +3141,7 @@ export default function App() {
           module: "papers",
           title: `${paper.code}: ${paper.title}`,
           detail: `Past papers · ${paper.faculty}`,
+          previewUrl: moduleDestinationUrl("papers"),
           action: () => {
             setPaperFaculty(paper.faculty);
             navigateToModule("papers");
@@ -3052,6 +3167,7 @@ export default function App() {
           module: "bus",
           title: schedule.title,
           detail: `Bus schedule · ${schedule.effective}`,
+          previewUrl: moduleDestinationUrl("bus"),
           action: () => navigateToModule("bus"),
         });
       }
@@ -3078,6 +3194,7 @@ export default function App() {
           module: "bus",
           title: `${route.code} - ${route.route}`,
           detail: `Bus schedule · ${availability.label}`,
+          previewUrl: moduleDestinationUrl("bus"),
           action: () => {
             setSelectedBusDocumentId(route.documentId);
             setSelectedBusRouteId(route.id);
@@ -3104,6 +3221,7 @@ export default function App() {
           module: "requests",
           title: request.title,
           detail: `${request.type} · ${request.status}`,
+          previewUrl: moduleDestinationUrl("requests"),
           action: () => {
             setRequestPlaceFilter("All");
             navigateToModule("requests");
@@ -3119,7 +3237,7 @@ export default function App() {
         return aTitleMatch - bTitleMatch;
       })
       .slice(0, 8);
-  }, [appBusDocuments, marketplace, messages, papers, publicProfiles, questions, requests, search]);
+  }, [activeMarketplace, appBusDocuments, messages, papers, publicProfiles, questions, requests, search]);
 
   function addNotification(
     title: string,
@@ -3166,6 +3284,18 @@ export default function App() {
     if (window.location.pathname !== "/" || window.location.hash !== nextHash) {
       window.history.pushState(null, "", `/${nextHash}`);
     }
+  }
+
+  function resetMarketplaceView() {
+    setMarketCategory("All");
+    setMarketSort("Date posted");
+    setQuery("");
+    setSearchFocused(false);
+  }
+
+  function openMarketplacePage() {
+    resetMarketplaceView();
+    navigateToModule("marketplace");
   }
 
   async function signOut() {
@@ -3255,9 +3385,49 @@ export default function App() {
     }
   }
 
+  function profileDestinationUrl(name = profileData.name) {
+    const entry = name ? getProfile(name) : profileData;
+    const username = sanitizeUsername(entry.username ?? profileData.username ?? "");
+    return username ? usernameDestinationUrl(username) : moduleDestinationUrl("profile");
+  }
+
+  function updateDestinationPreview(target: EventTarget | null) {
+    if (target instanceof Element) {
+      setDestinationPreview(elementDestinationPreview(target));
+      return;
+    }
+    setDestinationPreview("");
+  }
+
+  useEffect(() => {
+    const showDestination = (event: Event) => {
+      updateDestinationPreview(event.target);
+    };
+    const refreshFocusedDestination = () => {
+      window.setTimeout(() => updateDestinationPreview(document.activeElement), 0);
+    };
+    const clearDestination = () => setDestinationPreview("");
+
+    document.addEventListener("pointerover", showDestination, true);
+    document.addEventListener("focusin", showDestination, true);
+    document.addEventListener("focusout", refreshFocusedDestination, true);
+    document.addEventListener("mouseleave", clearDestination, true);
+
+    return () => {
+      document.removeEventListener("pointerover", showDestination, true);
+      document.removeEventListener("focusin", showDestination, true);
+      document.removeEventListener("focusout", refreshFocusedDestination, true);
+      document.removeEventListener("mouseleave", clearDestination, true);
+    };
+  }, []);
+
   function handleDashboardNav(item: NavItem) {
     if (item.key === "profile") {
       openOwnProfile(activeModule === "profile" || profileSetupRequired);
+      return;
+    }
+    if (item.key === "marketplace") {
+      openMarketplacePage();
       return;
     }
     navigateToModule(item.key);
@@ -3270,6 +3440,8 @@ export default function App() {
       icon: <Icon size={20} aria-hidden="true" />,
       label: itemLabel,
       className: activeModule === item.key ? "is-active" : "",
+      moduleKey: item.key,
+      previewUrl: moduleDestinationUrl(item.key),
       onClick: () => handleDashboardNav(item),
     };
   });
@@ -3505,7 +3677,7 @@ export default function App() {
     setMarketplace((current) => [item, ...current]);
     setListingDraft(initialListing);
     setListingImages([]);
-    setMarketCategory("All");
+    resetMarketplaceView();
     setSelectedListingId(item.id);
     showNotice("Listing published");
     addNotification("Listing published", `${item.title} is now live in Marketplace.`, "marketplace");
@@ -3533,7 +3705,7 @@ export default function App() {
   }
 
   function saveListingEdit(itemId: string) {
-    const listing = marketplace.find((item) => item.id === itemId);
+    const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can save changes", "error");
       return;
@@ -3569,7 +3741,7 @@ export default function App() {
   }
 
   function deleteListing(itemId: string) {
-    const listing = marketplace.find((item) => item.id === itemId);
+    const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can delete this post", "error");
       return;
@@ -3577,7 +3749,14 @@ export default function App() {
     if (!window.confirm(`Delete "${listing.title}" from Marketplace?`)) {
       return;
     }
-    setMarketplace((current) => current.filter((item) => item.id !== itemId));
+    const deletedAt = new Date().toISOString();
+    setMarketplace((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? { ...item, deletedAt, deletedBy: currentUserId }
+          : item,
+      ),
+    );
     setFavourites((current) => current.filter((id) => id !== itemId));
     setSelectedListingId(null);
     setImageViewerListingId(null);
@@ -3585,7 +3764,7 @@ export default function App() {
   }
 
   function toggleListingSold(itemId: string) {
-    const listing = marketplace.find((item) => item.id === itemId);
+    const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can update sold status", "error");
       return;
@@ -4068,11 +4247,24 @@ export default function App() {
 
   function adminDeleteListing(itemId: string) {
     if (!requireAdmin()) return;
-    const item = marketplace.find((entry) => entry.id === itemId);
+    const item = activeMarketplace.find((entry) => entry.id === itemId);
     if (!item) return;
     if (!window.confirm(`Delete marketplace listing "${item.title}"?`)) return;
-    setMarketplace((current) => current.filter((entry) => entry.id !== itemId));
+    const deletedAt = new Date().toISOString();
+    setMarketplace((current) =>
+      current.map((entry) =>
+        entry.id === itemId
+          ? { ...entry, deletedAt, deletedBy: currentUserId }
+          : entry,
+      ),
+    );
     setFavourites((current) => current.filter((id) => id !== itemId));
+    if (selectedListingId === itemId) {
+      setSelectedListingId(null);
+    }
+    if (imageViewerListingId === itemId) {
+      setImageViewerListingId(null);
+    }
     showNotice("Listing removed by admin");
   }
 
@@ -5004,7 +5196,15 @@ export default function App() {
 
   if (routeNotFound) {
     return (
-      <div className="auth-shell">
+      <div
+        className="auth-shell"
+        onBlurCapture={() => {
+          window.setTimeout(() => updateDestinationPreview(document.activeElement), 0);
+        }}
+        onFocusCapture={(event) => updateDestinationPreview(event.target)}
+        onPointerLeave={() => setDestinationPreview("")}
+        onPointerOverCapture={(event) => updateDestinationPreview(event.target)}
+      >
         <section className="auth-card">
           <div className="brand auth-brand">
             <div className="brand-mark" aria-hidden="true">
@@ -5024,6 +5224,7 @@ export default function App() {
           </div>
           <button
             className="primary-button full-width"
+            data-preview-url={moduleDestinationUrl("home")}
             type="button"
             onClick={() => {
               setRouteNotFound(false);
@@ -5036,6 +5237,11 @@ export default function App() {
             Go home
           </button>
         </section>
+        {destinationPreview && (
+          <div className="destination-preview" aria-hidden="true">
+            {destinationPreview}
+          </div>
+        )}
       </div>
     );
   }
@@ -5046,7 +5252,15 @@ export default function App() {
 
   if (!canUseApp) {
     return (
-      <div className="auth-shell">
+      <div
+        className="auth-shell"
+        onBlurCapture={() => {
+          window.setTimeout(() => updateDestinationPreview(document.activeElement), 0);
+        }}
+        onFocusCapture={(event) => updateDestinationPreview(event.target)}
+        onPointerLeave={() => setDestinationPreview("")}
+        onPointerOverCapture={(event) => updateDestinationPreview(event.target)}
+      >
         <section className="auth-card">
           <div className="brand auth-brand">
             <div className="brand-mark" aria-hidden="true">
@@ -5069,13 +5283,21 @@ export default function App() {
           <NoticeBanner message={notice} tone={noticeTone} />
           <div className="auth-action-stack">
             <SignInButton mode="modal" forceRedirectUrl="/#profile">
-              <button className="primary-button full-width" type="button">
+              <button
+                className="primary-button full-width"
+                data-preview-url={moduleDestinationUrl("profile")}
+                type="button"
+              >
                 <UserCircle size={17} aria-hidden="true" />
                 Sign in
               </button>
             </SignInButton>
             <SignUpButton mode="modal" forceRedirectUrl="/#profile">
-              <button className="secondary-button full-width" type="button">
+              <button
+                className="secondary-button full-width"
+                data-preview-url={moduleDestinationUrl("profile")}
+                type="button"
+              >
                 <Plus size={17} aria-hidden="true" />
                 Create account
               </button>
@@ -5086,6 +5308,11 @@ export default function App() {
             security are handled directly by Clerk.
           </p>
         </section>
+        {destinationPreview && (
+          <div className="destination-preview" aria-hidden="true">
+            {destinationPreview}
+          </div>
+        )}
       </div>
     );
   }
@@ -5095,7 +5322,15 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onBlurCapture={() => {
+        window.setTimeout(() => updateDestinationPreview(document.activeElement), 0);
+      }}
+      onFocusCapture={(event) => updateDestinationPreview(event.target)}
+      onPointerLeave={() => setDestinationPreview("")}
+      onPointerOverCapture={(event) => updateDestinationPreview(event.target)}
+    >
       <aside className="sidebar" aria-label="EverythingUTM navigation">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
@@ -5167,6 +5402,7 @@ export default function App() {
                   searchResults.map((result) => (
                     <button
                       className="search-result-row"
+                      data-preview-url={result.previewUrl ?? moduleDestinationUrl(result.module)}
                       key={`${result.module}-${result.id}`}
                       type="button"
                       onMouseDown={(event) => {
@@ -5213,6 +5449,7 @@ export default function App() {
                         className={`notification-row ${
                           notification.read ? "" : "is-unread"
                         }`}
+                        data-module-key={notification.module}
                         key={notification.id}
                         type="button"
                         onClick={() => openNotification(notification)}
@@ -5228,6 +5465,7 @@ export default function App() {
             )}
             <button
               className="profile-chip"
+              data-module-key="profile"
               type="button"
               onClick={() => openOwnProfile(false)}
             >
@@ -5263,14 +5501,16 @@ export default function App() {
               <div className="heading-actions">
                 <button
                   className="primary-button"
+                  data-module-key="marketplace"
                   type="button"
-                  onClick={() => navigateToModule("marketplace")}
+                  onClick={openMarketplacePage}
                 >
                   <ShoppingBag size={17} aria-hidden="true" />
                   {t("openMarketplace")}
                 </button>
                 <button
                   className="secondary-button"
+                  data-module-key="requests"
                   type="button"
                   onClick={() => navigateToModule("requests")}
                 >
@@ -5284,7 +5524,7 @@ export default function App() {
               <article className="metric-card">
                 <Store size={20} aria-hidden="true" />
                 <span>{t("listingsLive")}</span>
-                <strong>{marketplace.length}</strong>
+                <strong>{activeMarketplace.length}</strong>
                 <small>Marketplace posts</small>
               </article>
               <article className="metric-card">
@@ -5301,8 +5541,10 @@ export default function App() {
               </article>
               <button
                 className="metric-card metric-button"
+                data-module-key="marketplace"
                 type="button"
                 onClick={() => {
+                  resetMarketplaceView();
                   setMarketCategory("Favourites");
                   navigateToModule("marketplace");
                 }}
@@ -5320,6 +5562,7 @@ export default function App() {
                   <h2>Live chat</h2>
                   <button
                     className="ghost-button"
+                    data-module-key="community"
                     type="button"
                     onClick={() => navigateToModule("community")}
                   >
@@ -5331,6 +5574,7 @@ export default function App() {
                   {messages.slice(-5).map((message) => (
                     <button
                       className="feed-item"
+                      data-module-key="community"
                       key={message.id}
                       type="button"
                       onClick={() => {
@@ -5369,6 +5613,7 @@ export default function App() {
                   {campusLocations.slice(0, 6).map((location) => (
                     <button
                       className="quick-place"
+                      data-module-key="map"
                       key={location.id}
                       type="button"
                       onClick={() => {
@@ -5388,6 +5633,7 @@ export default function App() {
                   <h2>Requests moving now</h2>
                   <button
                     className="ghost-button"
+                    data-module-key="requests"
                     type="button"
                     onClick={() => navigateToModule("requests")}
                   >
@@ -5638,6 +5884,7 @@ export default function App() {
                       {favouriteItems.map((item) => (
                         <button
                           className="favourite-row"
+                          data-listing-id={item.id}
                           key={item.id}
                           type="button"
                           onClick={() => setSelectedListingId(item.id)}
@@ -5651,16 +5898,33 @@ export default function App() {
                   )}
                 </div>
                 {visibleMarketplace.length === 0 ? (
-                  <EmptyState
-                    icon={ShoppingBag}
-                    title="No listings found"
-                    body="Try another category or search term."
-                  />
+                  <div className="empty-state-actions">
+                    <EmptyState
+                      icon={ShoppingBag}
+                      title="No listings found"
+                      body={
+                        marketplaceListingsHiddenByFilters
+                          ? "Your listings are saved. The current search or category filter is hiding them."
+                          : "Try another category or search term."
+                      }
+                    />
+                    {marketplaceListingsHiddenByFilters && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={resetMarketplaceView}
+                      >
+                        <Search size={16} aria-hidden="true" />
+                        Show all listings
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <div className="product-grid">
                     {visibleMarketplace.map((item) => (
                       <article
                         className={`product-card clickable-card ${item.sold ? "is-sold" : ""}`}
+                        data-listing-id={item.id}
                         key={item.id}
                         onClick={() => setSelectedListingId(item.id)}
                       >
@@ -5675,6 +5939,7 @@ export default function App() {
                           <p>{item.description}</p>
                           <button
                             className="seller-inline"
+                            data-preview-url={profileDestinationUrl(item.seller)}
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
@@ -5688,12 +5953,12 @@ export default function App() {
                             />
                             <span>{item.seller}</span>
                           </button>
-                          <div className="meta-row">
+                          <div className="meta-row listing-info-pills">
                             <span>{item.fulfillment ?? "Pickup"}</span>
                             <span>{item.condition}</span>
                             <span>{item.location}</span>
                             <span>{item.paymentPreference ?? "Cash"}</span>
-                            <span>Posted {formatDate(item.createdAt)}</span>
+                            <span>Posted at {formatDate(item.createdAt)}</span>
                           </div>
                           <div className="tag-row">
                             {item.tags.slice(0, 3).map((tag) => (
@@ -5829,6 +6094,7 @@ export default function App() {
               </button>
               <button
                 className="listing-modal-image"
+                data-listing-id={selectedListing.id}
                 type="button"
                 onClick={() => {
                   setViewerImageIndex(0);
@@ -5854,15 +6120,16 @@ export default function App() {
                   {formatListingPrice(selectedListing.price)}
                 </strong>
                 <p>{selectedListing.description}</p>
-                <div className="meta-row">
+                <div className="meta-row listing-info-pills">
                   <span>{selectedListing.fulfillment ?? "Pickup"}</span>
                   <span>{selectedListing.condition}</span>
                   <span>{selectedListing.location}</span>
                   <span>{selectedListing.paymentPreference ?? "Cash"}</span>
-                  <span>Posted {formatDate(selectedListing.createdAt)}</span>
+                  <span>Posted at {formatDate(selectedListing.createdAt)}</span>
                 </div>
                 <button
                   className="seller-card"
+                  data-preview-url={profileDestinationUrl(selectedListing.seller)}
                   type="button"
                   onClick={() => {
                     setSelectedListingId(null);
@@ -6537,6 +6804,7 @@ export default function App() {
                         <div className="message-head">
                           <button
                             className="author-button"
+                            data-preview-url={profileDestinationUrl(message.author)}
                             type="button"
                             onClick={() => openProfile(message.author)}
                           >
@@ -6888,6 +7156,7 @@ export default function App() {
                         </div>
                         <button
                           className="author-line"
+                          data-preview-url={profileDestinationUrl(question.author)}
                           type="button"
                           onClick={() => openProfile(question.author)}
                         >
@@ -7040,6 +7309,7 @@ export default function App() {
                                 <div>
                                   <button
                                     className="author-button"
+                                    data-preview-url={profileDestinationUrl(answer.author)}
                                     type="button"
                                     onClick={() => openProfile(answer.author)}
                                   >
@@ -7348,6 +7618,7 @@ export default function App() {
                         </p>
                         <button
                           className="author-line"
+                          data-preview-url={profileDestinationUrl(paper.uploader)}
                           type="button"
                           onClick={() => openProfile(paper.uploader)}
                         >
@@ -7705,6 +7976,7 @@ export default function App() {
                       <h2>{request.title}</h2>
                       <button
                         className="author-line"
+                        data-preview-url={profileDestinationUrl(request.requester)}
                         type="button"
                         onClick={() => openProfile(request.requester)}
                       >
@@ -7809,6 +8081,7 @@ export default function App() {
                       {request.driver && (
                         <button
                           className="driver-chip"
+                          data-preview-url={profileDestinationUrl(request.driver)}
                           type="button"
                           onClick={() => openProfile(request.driver ?? "")}
                         >
@@ -7896,7 +8169,7 @@ export default function App() {
         )}
 
         {activeModule === "bus" && (
-          <section className="module">
+          <section className="module bus-module">
             <div className="module-heading">
               <div>
                 <p className="eyebrow">UTM shuttle updates</p>
@@ -7904,6 +8177,7 @@ export default function App() {
               </div>
               <button
                 className="secondary-button"
+                data-module-key="requests"
                 type="button"
                 onClick={() => navigateToModule("requests")}
               >
@@ -8046,6 +8320,7 @@ export default function App() {
                   </a>
                   <button
                     className="ghost-button"
+                    data-module-key="map"
                     type="button"
                     onClick={() => navigateToModule("map")}
                   >
@@ -8100,6 +8375,11 @@ export default function App() {
                   return (
                     <button
                       className={`panel family-card ${banned ? "is-banned" : ""}`}
+                      data-preview-url={
+                        username
+                          ? usernameDestinationUrl(username)
+                          : profileDestinationUrl(entry.name)
+                      }
                       key={username || entry.name}
                       type="button"
                       onClick={() => openProfile(displayUsername || entry.name)}
@@ -8130,8 +8410,9 @@ export default function App() {
               </div>
               <button
                 className="secondary-button"
+                data-module-key="marketplace"
                 type="button"
-                onClick={() => navigateToModule("marketplace")}
+                onClick={openMarketplacePage}
               >
                 <Store size={17} aria-hidden="true" />
                 Open marketplace
@@ -8155,6 +8436,7 @@ export default function App() {
                         cards={reelItems.map((item) => (
                           <button
                             className={`reel-card ${item.sold ? "is-sold" : ""}`}
+                            data-listing-id={item.id}
                             key={item.id}
                             type="button"
                             onClick={(event) => {
@@ -8215,6 +8497,7 @@ export default function App() {
                   </button>
                   <button
                     className="ghost-button full-width"
+                    data-module-key="home"
                     type="button"
                     onClick={() => navigateToModule("home")}
                   >
@@ -8474,7 +8757,7 @@ export default function App() {
                         </button>
                       </article>
                     ))}
-                    {marketplace.slice(0, 6).map((item) => (
+                    {activeMarketplace.slice(0, 6).map((item) => (
                       <article className="admin-row" key={item.id}>
                         <div>
                           <strong>{item.title}</strong>
@@ -9216,20 +9499,197 @@ export default function App() {
                 </p>
               </section>
 
-              <section className="panel settings-info-panel">
+              <section className="panel settings-info-panel privacy-policy-panel">
                 <div className="panel-heading">
-                  <h2>{t("terms")}</h2>
+                  <h2>Privacy Policy</h2>
                   <FileText size={18} aria-hidden="true" />
                 </div>
-                <p className="muted settings-note">
-                  EverythingUTM is a campus coordination tool, not an official UTM
-                  authority, escrow service, transport company, bank, or file host.
-                  Users are responsible for truthful listings, lawful sharing of
-                  past papers, respectful chat behavior, and checking QR/account
-                  details before paying. Do not impersonate staff, sell prohibited
-                  items, harass users, upload malicious files, or share exam content
-                  that your faculty has not allowed to circulate.
-                </p>
+                <div className="privacy-policy-content">
+                  <p className="policy-updated">Last updated May 21, 2026</p>
+                  <p>
+                    This Privacy Notice for EverythingUTM LLC ("we", "us", or
+                    "our") explains how and why we access, collect, store, use,
+                    and share personal information when you use EverythingUTM at
+                    everythingutm.netlify.app, the EverythingUTM app experience,
+                    or any related service that links to this notice.
+                  </p>
+                  <p>
+                    EverythingUTM is a student-centered campus coordination app,
+                    not an official UTM authority, escrow service, transport
+                    company, bank, or file host. Users are responsible for
+                    truthful listings, lawful sharing of past papers, respectful
+                    chat behavior, and checking QR/account details before paying.
+                  </p>
+                  <h3>Summary Of Key Points</h3>
+                  <p>
+                    We process personal information that you provide, such as
+                    names, usernames, phone numbers, email addresses, contact
+                    preferences, matric numbers, study year, faculty, gender or
+                    sex, profile photos, marketplace listings, messages, reviews,
+                    uploaded files, support requests, and bug reports.
+                  </p>
+                  <p>
+                    We may also process technical information such as device
+                    details, browser details, IP address, usage activity, crash
+                    data, approximate location, and app performance information
+                    when needed to keep the service secure and functional.
+                  </p>
+                  <p>
+                    We use information to create and authenticate accounts,
+                    deliver app features, enable user-to-user communication,
+                    manage orders and listings, review uploaded papers, respond
+                    to support requests, prevent abuse, improve the app, and
+                    comply with legal obligations.
+                  </p>
+                  <div className="policy-toc">
+                    <span>1. What information do we collect?</span>
+                    <span>2. How do we process your information?</span>
+                    <span>3. When and with whom do we share it?</span>
+                    <span>4. Cookies and tracking technologies</span>
+                    <span>5. How do we handle social logins?</span>
+                    <span>6. How long do we keep information?</span>
+                    <span>7. How do we keep information safe?</span>
+                    <span>8. Do we collect information from minors?</span>
+                    <span>9. What are your privacy rights?</span>
+                    <span>10. Controls for Do-Not-Track features</span>
+                    <span>11. Regional privacy rights</span>
+                    <span>12. Updates to this notice</span>
+                    <span>13. Contact details</span>
+                    <span>14. Review, update, or delete your data</span>
+                  </div>
+                  <h3>1. What Information Do We Collect?</h3>
+                  <p>
+                    We collect personal information you voluntarily provide when
+                    you register, create or update a profile, post listings,
+                    send messages, upload papers, report bugs, contact us, or use
+                    campus tools inside the app. All information you provide must
+                    be true, complete, and accurate.
+                  </p>
+                  <p>
+                    Automatically collected information can include log and usage
+                    data, device data, location data, browser settings, pages and
+                    features used, timestamps, diagnostics, and similar
+                    information needed for security, operation, troubleshooting,
+                    internal analytics, and reporting.
+                  </p>
+                  <h3>2. How Do We Process Your Information?</h3>
+                  <p>
+                    We process information to facilitate account creation and
+                    authentication, manage user accounts, provide requested
+                    services, enable chats and marketplace flows, send important
+                    administrative information, respond to support inquiries,
+                    request feedback, protect the service, identify usage trends,
+                    evaluate and improve EverythingUTM, and comply with legal
+                    obligations.
+                  </p>
+                  <h3>3. When And With Whom Do We Share Information?</h3>
+                  <p>
+                    We may share information with service providers that help run
+                    the app, including Clerk for authentication, Convex for data
+                    storage and backend functions, Netlify for hosting, Google
+                    Maps Platform APIs for map and location features, analytics
+                    and performance tools, design and engineering tools, and Buy
+                    Me a Coffee when you choose to support the developer.
+                  </p>
+                  <p>
+                    Other users may see information you publish in public areas,
+                    including public profile details, listings, reviews, Q&A
+                    posts, chat content, and approved paper metadata. We may also
+                    share or transfer information during a business transfer or
+                    when required by law.
+                  </p>
+                  <h3>4. Do We Use Cookies And Tracking Technologies?</h3>
+                  <p>
+                    We use cookies and similar technologies to maintain account
+                    security, keep you signed in, prevent crashes, fix bugs, save
+                    preferences, cache functional app data, and support basic
+                    site features. Some third-party services may use their own
+                    cookies or tracking technologies for security, analytics, or
+                    service delivery.
+                  </p>
+                  <div className="cookie-classification-list">
+                    <span>__client_uat and __client_uat_*: Clerk session cookies</span>
+                    <span>__clerk_db_jwt and __clerk_environment: Clerk auth support</span>
+                    <span>everything-utm:*: functional local app storage and cache</span>
+                  </div>
+                  <p>
+                    Your browser may allow you to remove or reject cookies.
+                    Removing essential cookies can break sign-in, profile
+                    saving, and authenticated Convex requests.
+                  </p>
+                  <h3>5. How Do We Handle Social Logins?</h3>
+                  <p>
+                    If you sign in with Google or another social provider, Clerk
+                    may receive profile information such as your name, email
+                    address, profile picture, and account identifier. EverythingUTM
+                    uses this information only to authenticate you and connect
+                    your profile to your account.
+                  </p>
+                  <h3>6. How Long Do We Keep Your Information?</h3>
+                  <p>
+                    We keep personal information only as long as needed for the
+                    purposes in this notice, unless a longer retention period is
+                    required or permitted by law. No purpose in this notice
+                    requires us to keep personal information for longer than
+                    three months after account termination, except where backup,
+                    legal, fraud prevention, or safety obligations require it.
+                  </p>
+                  <h3>7. How Do We Keep Your Information Safe?</h3>
+                  <p>
+                    We use reasonable technical and organizational safeguards to
+                    protect personal information. However, no electronic
+                    transmission or storage technology is guaranteed to be fully
+                    secure, so you should only use the service in a secure
+                    environment.
+                  </p>
+                  <h3>8. Do We Collect Information From Minors?</h3>
+                  <p>
+                    We do not knowingly collect data from or market to children
+                    under 18 years of age. If we learn that we collected personal
+                    information from a child under 18, we will deactivate the
+                    account and take reasonable steps to delete that data.
+                  </p>
+                  <h3>9. What Are Your Privacy Rights?</h3>
+                  <p>
+                    Depending on where you live, you may have rights to review,
+                    access, correct, delete, restrict, or object to processing of
+                    your personal information, and you may withdraw consent where
+                    processing relies on consent. You can update or delete
+                    account information from Settings or contact us.
+                  </p>
+                  <h3>10. Controls For Do-Not-Track Features</h3>
+                  <p>
+                    Some browsers include Do-Not-Track controls. Because no
+                    uniform standard has been finalized, we do not currently
+                    respond to DNT browser signals or other automatic mechanisms.
+                  </p>
+                  <h3>11. Do Other Regions Have Specific Privacy Rights?</h3>
+                  <p>
+                    Users in regions with privacy laws such as Australia or New
+                    Zealand may have additional rights to access or correct
+                    personal information and to submit privacy complaints to the
+                    applicable privacy authority.
+                  </p>
+                  <h3>12. Do We Make Updates To This Notice?</h3>
+                  <p>
+                    Yes. We may update this Privacy Policy when needed to stay
+                    compliant with laws or to reflect changes in EverythingUTM.
+                    The updated version will be indicated by a revised date.
+                  </p>
+                  <h3>13. How Can You Contact Us?</h3>
+                  <p>
+                    Email: hammau05@gmail.com. Postal contact: EverythingUTM LLC,
+                    Taman Universiti, Skudai, Johor Bahru, Johor 81300,
+                    Malaysia.
+                  </p>
+                  <h3>14. How Can You Review, Update, Or Delete Your Data?</h3>
+                  <p>
+                    Visit Settings inside EverythingUTM to review, update, or
+                    delete your profile and local app data. You may also contact
+                    us at hammau05@gmail.com to request access, correction, or
+                    deletion of personal information we collect from you.
+                  </p>
+                </div>
               </section>
 
               <section className="panel settings-info-panel">
@@ -9316,6 +9776,11 @@ export default function App() {
         )}
 
       </main>
+      {destinationPreview && (
+        <div className="destination-preview" aria-hidden="true">
+          {destinationPreview}
+        </div>
+      )}
     </div>
   );
 }

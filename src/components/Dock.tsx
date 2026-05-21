@@ -24,6 +24,8 @@ export type DockItemData = {
   label: React.ReactNode;
   onClick: () => void;
   className?: string;
+  moduleKey?: string;
+  previewUrl?: string;
 };
 
 export type DockProps = {
@@ -41,6 +43,8 @@ type DockItemProps = {
   className?: string;
   children: React.ReactNode;
   onClick?: () => void;
+  moduleKey?: string;
+  previewUrl?: string;
   mouseX: MotionValue<number>;
   spring: SpringOptions;
   distance: number;
@@ -52,6 +56,8 @@ function DockItem({
   children,
   className = "",
   onClick,
+  moduleKey,
+  previewUrl,
   mouseX,
   spring,
   distance,
@@ -86,6 +92,8 @@ function DockItem({
       onBlur={() => isHovered.set(0)}
       onClick={onClick}
       className={`rb-dock-item ${className}`}
+      data-module-key={moduleKey}
+      data-preview-url={previewUrl}
       tabIndex={0}
       role="button"
       aria-haspopup="true"
@@ -196,6 +204,8 @@ export default function Dock({
             key={index}
             onClick={item.onClick}
             className={item.className}
+            moduleKey={item.moduleKey}
+            previewUrl={item.previewUrl}
             mouseX={mouseX}
             spring={spring}
             distance={distance}

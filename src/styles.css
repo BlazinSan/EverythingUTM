@@ -39,6 +39,10 @@
   --shadow: 0 20px 54px rgba(0, 0, 0, 0.36);
 }
 
+:root[data-theme="dark"] .destination-preview {
+  background: rgba(23, 28, 36, 0.96);
+}
+
 * {
   box-sizing: border-box;
   letter-spacing: 0;
@@ -220,6 +224,27 @@ button:active,
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.destination-preview {
+  position: fixed;
+  left: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 1200;
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 5px 9px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(34, 32, 39, 0.16);
 }
 
 img {
@@ -1198,6 +1223,34 @@ textarea:focus {
 .meta-row {
   color: var(--muted);
   font-size: 13px;
+}
+
+.meta-row span {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.listing-info-pills {
+  align-items: flex-start;
+}
+
+.listing-info-pills span,
+.listing-detail-modal .listing-info-pills span {
+  padding: 6px 10px;
+  color: var(--text);
+  background: rgba(216, 74, 95, 0.12);
+  border-color: rgba(216, 74, 95, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .tag-row span,
@@ -2826,12 +2879,37 @@ textarea:focus {
   align-items: start;
 }
 
+@media (min-width: 981px) {
+  .settings-layout {
+    display: block;
+    column-count: 2;
+    column-gap: 16px;
+  }
+
+  .settings-layout > .panel {
+    display: inline-block;
+    width: 100%;
+    margin: 0 0 16px;
+    break-inside: avoid;
+  }
+
+  .settings-layout > .auth-inline-panel {
+    display: block;
+    column-span: all;
+  }
+
+  .settings-layout > .privacy-policy-panel {
+    display: block;
+    column-span: all;
+  }
+}
+
 .settings-payment-panel {
   grid-column: 1 / -1;
 }
 
 .settings-info-panel {
-  min-height: 170px;
+  min-height: 0;
 }
 
 .auth-inline-panel {
@@ -2908,6 +2986,70 @@ textarea:focus {
 .settings-note {
   margin: 12px 0 0;
   line-height: 1.45;
+}
+
+.privacy-policy-panel {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.privacy-policy-content {
+  display: grid;
+  gap: 11px;
+  max-height: min(620px, 70vh);
+  padding-right: 8px;
+  overflow: auto;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.privacy-policy-content p,
+.privacy-policy-content h3 {
+  margin: 0;
+}
+
+.privacy-policy-content h3 {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.policy-updated {
+  color: var(--text);
+  font-weight: 900;
+}
+
+.cookie-classification-list {
+  display: grid;
+  gap: 7px;
+}
+
+.policy-toc {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.policy-toc span {
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.cookie-classification-list span {
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .payment-provider-control {
@@ -3529,6 +3671,12 @@ textarea:focus {
   border-radius: 8px;
 }
 
+.empty-state-actions {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+}
+
 .empty-state h3 {
   margin: 0;
   color: var(--text);
@@ -3875,6 +4023,12 @@ textarea:focus {
     padding-bottom: 92px;
   }
 
+  .destination-preview {
+    bottom: calc(104px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 18px);
+    font-size: 11px;
+  }
+
   .sidebar {
     position: fixed;
     right: 0;
@@ -3993,6 +4147,105 @@ textarea:focus {
     font-size: 28px;
   }
 
+  .bus-module .module-heading {
+    gap: 10px;
+  }
+
+  .bus-module .module-heading h1 {
+    font-size: 20px;
+  }
+
+  .bus-module .module-heading .secondary-button {
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .bus-module .bus-layout {
+    grid-template-columns: minmax(104px, 0.4fr) minmax(0, 0.6fr);
+    gap: 8px;
+  }
+
+  .bus-module .bus-update-panel,
+  .bus-module .bus-timetable-panel {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .bus-module .panel-heading {
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .bus-module .panel-heading h2 {
+    font-size: 15px;
+  }
+
+  .bus-module .panel-heading span,
+  .bus-module .bus-summary-strip span:not(.pill),
+  .bus-module .bus-notes span {
+    font-size: 11px;
+  }
+
+  .bus-module .chip,
+  .bus-module .bus-stop-flow button {
+    min-height: 30px;
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+
+  .bus-module .bus-search {
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 5px;
+    margin-bottom: 8px;
+    padding: 6px 7px;
+  }
+
+  .bus-module .bus-search input {
+    font-size: 12px;
+  }
+
+  .bus-module .bus-route-list {
+    gap: 7px;
+    max-height: calc(100dvh - 248px);
+  }
+
+  .bus-module .bus-route-row {
+    gap: 4px;
+    padding: 7px;
+  }
+
+  .bus-module .bus-route-row strong {
+    font-size: 13px;
+  }
+
+  .bus-module .bus-route-row span,
+  .bus-module .bus-route-row small {
+    font-size: 10.5px;
+    line-height: 1.28;
+  }
+
+  .bus-module .bus-availability {
+    min-height: 22px;
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+
+  .bus-module .bus-stop-select {
+    gap: 5px;
+    padding: 6px 7px;
+    font-size: 12px;
+  }
+
+  .bus-module .bus-timetable-image {
+    max-height: 56vh;
+  }
+
+  .bus-module .bus-layout {
+    width: 138.89%;
+    zoom: 0.72;
+  }
+
   .heading-actions,
   .filter-row {
     width: 100%;
@@ -4007,6 +4260,7 @@ textarea:focus {
   .metric-grid,
   .payment-summary,
   .quick-place-grid,
+  .policy-toc,
   .two-col,
   .setup-theme-toggle,
   .paper-card,
@@ -4020,6 +4274,33 @@ textarea:focus {
   .review-form,
   .favourite-row {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px;
+  }
+
+  .metric-card {
+    min-height: 0;
+    aspect-ratio: 1 / 1;
+    padding: 9px;
+  }
+
+  .metric-card span {
+    font-size: 10px;
+    line-height: 1.15;
+  }
+
+  .metric-card strong {
+    margin-top: 0;
+    font-size: clamp(19px, 7vw, 26px);
+    line-height: 1;
+  }
+
+  .metric-card small {
+    font-size: 9.5px;
+    line-height: 1.15;
   }
 
   .listing-detail-modal > img,
