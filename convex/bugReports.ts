@@ -73,28 +73,9 @@ export const sendEmail = action({
     ].join("\n");
 
     if (!resendApiKey) {
-      const fallback = await fetch(
-        `https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            name: args.userName || "Unknown",
-            email: args.userEmail || "unknown@everythingutm.app",
-            _subject: "EverythingUTM bug report",
-            _template: "table",
-            _captcha: "false",
-            message: text,
-          }),
-        },
+      throw new Error(
+        "RESEND_API_KEY is not configured in Convex, so the bug report was saved but no email was sent.",
       );
-      if (!fallback.ok) {
-        throw new Error(await fallback.text().catch(() => "Email failed"));
-      }
-      return { ok: true, provider: "formsubmit", reportedAtLocal };
     }
 
     const response = await fetch("https://api.resend.com/emails", {
@@ -107,6 +88,10 @@ export const sendEmail = action({
         from: fromEmail,
         to: toEmail,
         subject: "EverythingUTM bug report",
+        reply_to:
+          args.userEmail && args.userEmail.includes("@")
+            ? args.userEmail
+            : undefined,
         text,
       }),
     });

@@ -2059,6 +2059,9 @@ export default function App() {
   });
   const [selectedProfileName, setSelectedProfileName] = useState(profile.name);
   const [profileEditMode, setProfileEditMode] = useState(false);
+  const [profileUnlockedUserId, setProfileUnlockedUserId] = useState<
+    string | null
+  >(null);
   const [reviewDraft, setReviewDraft] = useState({ rating: "5", body: "" });
   const [bannedUsers, setBannedUsers] = useLocalStorageState<string[]>(
     "everything-utm:banned-users",
@@ -2126,10 +2129,17 @@ export default function App() {
   };
   const canUseApp = isSignedIn;
   const profileLoading = isSignedIn && remoteProfileRow === undefined;
+  const remoteProfileSaved = Boolean(
+    remoteProfileRow &&
+      (remoteProfileRow.saved ??
+        remoteProfileRow.profile?.profileSaved ??
+        Boolean(remoteProfileRow.profile)),
+  );
   const profileSetupRequired =
     isSignedIn &&
     !profileLoading &&
-    !isProfileSaved(profileData);
+    !remoteProfileSaved &&
+    profileUnlockedUserId !== currentUserId;
   const t = (key: string) =>
     uiText[appSettings.language]?.[key] ?? uiText.en[key] ?? key;
   const search = normalize(query);
@@ -2324,6 +2334,7 @@ export default function App() {
       setProfileDraft(emptyProfile());
       setSelectedProfileName("");
       setProfileEditMode(false);
+      setProfileUnlockedUserId(null);
       return;
     }
     if (remoteProfileRow === undefined) {
@@ -2349,7 +2360,10 @@ export default function App() {
       usernameDisplay(nextProfile.username) || nextProfile.name,
     );
     setProfileEditMode(!isProfileSaved(nextProfile));
-  }, [isSignedIn, remoteProfileRow, setProfile, user]);
+    if (isProfileSaved(nextProfile)) {
+      setProfileUnlockedUserId(currentUserId);
+    }
+  }, [currentUserId, isSignedIn, remoteProfileRow, setProfile, user]);
 
   useEffect(() => {
     setProfileDraft({ ...appUser, ...profile });
@@ -2416,9 +2430,18 @@ export default function App() {
       return;
     }
     lastProfileSetupUserIdRef.current = userId;
+    const saved =
+      remoteProfileRow !== null &&
+      (remoteProfileRow.saved ??
+        remoteProfileRow.profile?.profileSaved ??
+        Boolean(remoteProfileRow.profile));
+    if (saved) {
+      setProfileUnlockedUserId(userId);
+      return;
+    }
     setSelectedProfileName(usernameDisplay(profileData.username) || profileData.name);
     setProfileDraft({ ...profileData });
-    setProfileEditMode(!isProfileSaved(profileData));
+    setProfileEditMode(true);
     navigateToModule("profile", { skipProfileGuard: true });
   }, [profileData, remoteProfileRow, user?.id]);
 
@@ -4732,6 +4755,7 @@ export default function App() {
     );
     setProfile(nextProfile);
     setProfileDraft(nextProfile);
+    setProfileUnlockedUserId(currentUserId);
     setSelectedProfileName(usernameDisplay(nextUsername));
     setProfileEditMode(false);
     showNotice("Profile saved");

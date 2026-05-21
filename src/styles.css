@@ -607,7 +607,7 @@ img {
   font-size: 12px;
   font-weight: 900;
   background: var(--utm-red);
-  border-radius: 8px;
+  border-radius: 50%;
 }
 
 .person-avatar.is-empty {
@@ -2409,7 +2409,7 @@ textarea:focus {
   color: var(--muted);
   background: var(--surface-strong);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 50%;
 }
 
 .profile-photo img {
@@ -2721,7 +2721,7 @@ textarea:focus {
   color: #fff;
   font-weight: 900;
   background: var(--utm-red);
-  border-radius: 8px;
+  border-radius: 50%;
 }
 
 .seller-avatar img {
