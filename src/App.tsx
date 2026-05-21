@@ -895,7 +895,7 @@ function sanitizeAgeInput(value: string) {
   if (!numeric) return "";
   const age = Number(numeric);
   if (!Number.isFinite(age)) return "";
-  return String(Math.min(120, Math.max(16, age)));
+  return String(Math.min(120, age));
 }
 
 function sanitizeUsername(value: string) {
@@ -4593,10 +4593,6 @@ export default function App() {
     const cleanName = sanitizeNameInput(profileDraft.name).trim();
     const cleanAge = sanitizeAgeInput(profileDraft.age);
     const cleanContact = sanitizePhoneInput(profileDraft.contactNumber);
-    if (!(await waitForConvexAuthReady())) {
-      showConvexAuthError("save");
-      return false;
-    }
     if (!cleanName) {
       showNotice("Profile needs your name before saving", "error");
       return false;
@@ -4622,6 +4618,7 @@ export default function App() {
       showNotice("That username is already taken. Choose another one.", "error");
       return false;
     }
+    const convexReadyBeforeSave = await waitForConvexAuthReady(3000);
     const nextProfile = {
       ...profileDraft,
       name: cleanName,
@@ -4640,8 +4637,15 @@ export default function App() {
         profile: toConvexJson(nextProfile),
       });
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Profile could not be saved online";
+      const authLikeFailure =
+        !convexReadyBeforeSave ||
+        /must be signed in|auth|token|jwt|clerk/i.test(message);
       showNotice(
-        error instanceof Error ? error.message : "Profile could not be saved online",
+        authLikeFailure
+          ? "Convex rejected the Clerk session token. Make sure the Clerk JWT template is named convex, then deploy the Convex auth config and sign in again."
+          : message,
         "error",
       );
       return false;
@@ -8509,195 +8513,231 @@ export default function App() {
                     <UserCircle size={18} aria-hidden="true" />
                   </div>
                   {profileSetupRequired ? (
-                    <Stepper
-                      initialStep={1}
-                      backButtonText="Previous"
-                      nextButtonText="Next"
-                      completeButtonText="Save profile"
-                      disableStepIndicators={false}
-                      onFinalStepCompleted={saveProfile}
-                    >
-                      <Step>
-                        <div className="setup-step-copy">
-                          <h3>Campus identity</h3>
-                          <p className="muted">
-                            Choose the name and username other UTM students will see.
-                          </p>
+                    <>
+                      <div className="setup-theme-toggle">
+                        <div>
+                          <strong>Appearance</strong>
+                          <span>Switch the app theme before finishing setup.</span>
                         </div>
-                        <label>
-                          <span className="field-label-icon">
-                            <UserCircle size={14} aria-hidden="true" />
-                            Name
-                          </span>
-                          <input
-                            value={profileDraft.name}
-                            onChange={(event) =>
-                              setProfileDraft((current) => ({
+                        <div className="segmented-control setup-theme-buttons">
+                          <button
+                            className={appSettings.theme === "light" ? "is-active" : ""}
+                            type="button"
+                            onClick={() =>
+                              setSettings((current) => ({
                                 ...current,
-                                name: sanitizeNameInput(event.target.value),
+                                theme: "light",
                               }))
                             }
-                          />
-                        </label>
-                        <label>
-                          <span className="field-label-icon">
-                            <UserRound size={14} aria-hidden="true" />
-                            Username
-                          </span>
-                          <input
-                            autoCapitalize="none"
-                            spellCheck={false}
-                            value={profileDraft.username ?? ""}
-                            onChange={(event) =>
-                              setProfileDraft((current) => ({
+                          >
+                            <Sun size={16} aria-hidden="true" />
+                            {t("lightMode")}
+                          </button>
+                          <button
+                            className={appSettings.theme === "dark" ? "is-active" : ""}
+                            type="button"
+                            onClick={() =>
+                              setSettings((current) => ({
                                 ...current,
-                                username: sanitizeUsername(event.target.value),
+                                theme: "dark",
                               }))
                             }
-                            placeholder="e.g. @hasan-utm"
-                          />
-                        </label>
-                      </Step>
-                      <Step>
-                        <div className="setup-step-copy">
-                          <h3>Contact and student info</h3>
-                          <p className="muted">
-                            Keep private details minimal and only share what helps others identify you.
-                          </p>
+                          >
+                            <Moon size={16} aria-hidden="true" />
+                            {t("darkMode")}
+                          </button>
                         </div>
-                        <div className="two-col">
+                      </div>
+                      <Stepper
+                        initialStep={1}
+                        backButtonText="Previous"
+                        nextButtonText="Next"
+                        completeButtonText="Save profile"
+                        disableStepIndicators={false}
+                        onFinalStepCompleted={saveProfile}
+                      >
+                        <Step>
+                          <div className="setup-step-copy">
+                            <h3>Campus identity</h3>
+                            <p className="muted">
+                              Choose the name and username other UTM students will see.
+                            </p>
+                          </div>
                           <label>
                             <span className="field-label-icon">
-                              <Phone size={14} aria-hidden="true" />
-                              Contact number
+                              <UserCircle size={14} aria-hidden="true" />
+                              Name
                             </span>
                             <input
-                              inputMode="numeric"
-                              minLength={7}
-                              pattern="[0-9]*"
-                              value={profileDraft.contactNumber}
+                              value={profileDraft.name}
                               onChange={(event) =>
                                 setProfileDraft((current) => ({
                                   ...current,
-                                  contactNumber: sanitizePhoneInput(event.target.value),
+                                  name: sanitizeNameInput(event.target.value),
                                 }))
                               }
                             />
                           </label>
                           <label>
                             <span className="field-label-icon">
-                              <IdCard size={14} aria-hidden="true" />
-                              Matric number
+                              <UserRound size={14} aria-hidden="true" />
+                              Username
                             </span>
                             <input
-                              value={profileDraft.matricNumber}
+                              autoCapitalize="none"
+                              spellCheck={false}
+                              value={profileDraft.username ?? ""}
                               onChange={(event) =>
                                 setProfileDraft((current) => ({
                                   ...current,
-                                  matricNumber: sanitizePlainText(
-                                    event.target.value,
-                                    24,
-                                  ).toUpperCase(),
+                                  username: sanitizeUsername(event.target.value),
                                 }))
                               }
+                              placeholder="e.g. @hasan-utm"
                             />
                           </label>
-                        </div>
-                        <div className="two-col">
+                        </Step>
+                        <Step>
+                          <div className="setup-step-copy">
+                            <h3>Contact and student info</h3>
+                            <p className="muted">
+                              Keep private details minimal and only share what helps others identify you.
+                            </p>
+                          </div>
+                          <div className="two-col">
+                            <label>
+                              <span className="field-label-icon">
+                                <Phone size={14} aria-hidden="true" />
+                                Contact number
+                              </span>
+                              <input
+                                inputMode="numeric"
+                                minLength={7}
+                                pattern="[0-9]*"
+                                value={profileDraft.contactNumber}
+                                onChange={(event) =>
+                                  setProfileDraft((current) => ({
+                                    ...current,
+                                    contactNumber: sanitizePhoneInput(event.target.value),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span className="field-label-icon">
+                                <IdCard size={14} aria-hidden="true" />
+                                Matric number
+                              </span>
+                              <input
+                                value={profileDraft.matricNumber}
+                                onChange={(event) =>
+                                  setProfileDraft((current) => ({
+                                    ...current,
+                                    matricNumber: sanitizePlainText(
+                                      event.target.value,
+                                      24,
+                                    ).toUpperCase(),
+                                  }))
+                                }
+                              />
+                            </label>
+                          </div>
+                          <div className="two-col">
+                            <label>
+                              <span className="field-label-icon">
+                                <Cake size={14} aria-hidden="true" />
+                                Age
+                              </span>
+                              <input
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                type="text"
+                                value={profileDraft.age}
+                                onChange={(event) =>
+                                  setProfileDraft((current) => ({
+                                    ...current,
+                                    age: sanitizeAgeInput(event.target.value),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span className="field-label-icon">
+                                <Users size={14} aria-hidden="true" />
+                                Sex
+                              </span>
+                              <select
+                                value={profileDraft.sex}
+                                onChange={(event) =>
+                                  setProfileDraft((current) => ({
+                                    ...current,
+                                    sex: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Select sex</option>
+                                <option>Female</option>
+                                <option>Male</option>
+                                <option>Prefer not to say</option>
+                              </select>
+                            </label>
+                          </div>
+                        </Step>
+                        <Step>
+                          <div className="setup-step-copy">
+                            <h3>Academic details</h3>
+                            <p className="muted">
+                              Save once you are ready. Everything else unlocks after this.
+                            </p>
+                          </div>
                           <label>
                             <span className="field-label-icon">
-                              <Cake size={14} aria-hidden="true" />
-                              Age
-                            </span>
-                            <input
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              type="text"
-                              value={profileDraft.age}
-                              onChange={(event) =>
-                                setProfileDraft((current) => ({
-                                  ...current,
-                                  age: sanitizeAgeInput(event.target.value),
-                                }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span className="field-label-icon">
-                              <Users size={14} aria-hidden="true" />
-                              Sex
+                              <Building2 size={14} aria-hidden="true" />
+                              Faculty
                             </span>
                             <select
-                              value={profileDraft.sex}
+                              value={profileDraft.faculty}
                               onChange={(event) =>
                                 setProfileDraft((current) => ({
                                   ...current,
-                                  sex: event.target.value,
+                                  faculty: event.target.value,
                                 }))
                               }
                             >
-                              <option value="">Select sex</option>
-                              <option>Female</option>
-                              <option>Male</option>
-                              <option>Prefer not to say</option>
+                              <option value="">Select faculty</option>
+                              {faculties
+                                .filter((faculty) => faculty !== "All")
+                                .map((faculty) => (
+                                  <option key={faculty}>{faculty}</option>
+                                ))}
                             </select>
                           </label>
-                        </div>
-                      </Step>
-                      <Step>
-                        <div className="setup-step-copy">
-                          <h3>Academic details</h3>
-                          <p className="muted">
-                            Save once you are ready. Everything else unlocks after this.
-                          </p>
-                        </div>
-                        <label>
-                          <span className="field-label-icon">
-                            <Building2 size={14} aria-hidden="true" />
-                            Faculty
-                          </span>
-                          <select
-                            value={profileDraft.faculty}
-                            onChange={(event) =>
-                              setProfileDraft((current) => ({
-                                ...current,
-                                faculty: event.target.value,
-                              }))
-                            }
-                          >
-                            <option value="">Select faculty</option>
-                            {faculties
-                              .filter((faculty) => faculty !== "All")
-                              .map((faculty) => (
-                                <option key={faculty}>{faculty}</option>
-                              ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span className="field-label-icon">
-                            <GraduationCap size={14} aria-hidden="true" />
-                            Study year
-                          </span>
-                          <select
-                            value={profileDraft.studyYear}
-                            onChange={(event) =>
-                              setProfileDraft((current) => ({
-                                ...current,
-                                studyYear: event.target.value,
-                              }))
-                            }
-                          >
-                            <option value="">Select study year</option>
-                            <option>Foundation</option>
-                            <option>Year 1</option>
-                            <option>Year 2</option>
-                            <option>Year 3</option>
-                            <option>Year 4</option>
-                            <option>Postgraduate</option>
-                          </select>
-                        </label>
-                      </Step>
-                    </Stepper>
+                          <label>
+                            <span className="field-label-icon">
+                              <GraduationCap size={14} aria-hidden="true" />
+                              Study year
+                            </span>
+                            <select
+                              value={profileDraft.studyYear}
+                              onChange={(event) =>
+                                setProfileDraft((current) => ({
+                                  ...current,
+                                  studyYear: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">Select study year</option>
+                              <option>Foundation</option>
+                              <option>Year 1</option>
+                              <option>Year 2</option>
+                              <option>Year 3</option>
+                              <option>Year 4</option>
+                              <option>Postgraduate</option>
+                            </select>
+                          </label>
+                        </Step>
+                      </Stepper>
+                    </>
                   ) : (
                   <div className="stacked-form">
                     <div className="two-col">

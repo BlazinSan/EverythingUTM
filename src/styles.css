@@ -2516,6 +2516,33 @@ textarea:focus {
   color: var(--muted);
 }
 
+.setup-theme-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 300px);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.setup-theme-toggle strong,
+.setup-theme-toggle span {
+  display: block;
+}
+
+.setup-theme-toggle span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setup-theme-buttons {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .profile-stats,
 .profile-detail-list {
   display: flex;
@@ -3981,6 +4008,7 @@ textarea:focus {
   .payment-summary,
   .quick-place-grid,
   .two-col,
+  .setup-theme-toggle,
   .paper-card,
   .question-card,
   .ledger-row,
