@@ -3,8 +3,10 @@ import {
   type ChangeEvent,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -216,6 +218,8 @@ const requestSortOptions = [
 ] as const;
 
 const PROFILE_CROP_SIZE = 320;
+const LISTING_IMAGE_MAX_SIDE = 640;
+const LISTING_IMAGE_QUALITY = 0.66;
 
 const busAppliesToOptions = [
   "Regular semester campus shuttle service",
@@ -1003,6 +1007,31 @@ function loadImage(src: string) {
   });
 }
 
+async function readCompressedListingImage(file: File) {
+  const dataUrl = await readFileAsDataUrl(file);
+  try {
+    const image = await loadImage(dataUrl);
+    const scale = Math.min(
+      1,
+      LISTING_IMAGE_MAX_SIDE /
+        Math.max(image.naturalWidth || 1, image.naturalHeight || 1),
+    );
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return dataUrl;
+    }
+    context.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", LISTING_IMAGE_QUALITY);
+  } catch {
+    return dataUrl;
+  }
+}
+
 async function imageToShareFile(imageUrl: string, fileName: string) {
   try {
     const response = await fetch(imageUrl);
@@ -1702,7 +1731,29 @@ function useLocalStorageState<T>(
     }
   }, [key, state, convexLoaded, syncOnline, upsertOnlineState]);
 
-  return [state, setState] as const;
+  const setStoredState = useCallback((value: SetStateAction<T>) => {
+    setState((current) => {
+      const next =
+        typeof value === "function"
+          ? (value as (previous: T) => T)(current)
+          : value;
+      const cleanNext = sanitizeStoredState(key, next);
+      try {
+        window.localStorage.setItem(key, JSON.stringify(cleanNext));
+      } catch {
+        // Keep the app responsive even if browser storage is temporarily full.
+      }
+      if (syncOnline && convexLoaded) {
+        upsertOnlineState({
+          storageKey: key,
+          data: toConvexJson(cleanNext),
+        }).catch(() => undefined);
+      }
+      return cleanNext;
+    });
+  }, [convexLoaded, key, syncOnline, upsertOnlineState]);
+
+  return [state, setStoredState] as const;
 }
 
 function campusMarkerIcon(category: string, selected: boolean) {
@@ -3272,7 +3323,9 @@ export default function App() {
 
   async function updateListingImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    const images = await Promise.all(files.slice(0, 6).map(readFileAsDataUrl));
+    const images = await Promise.all(
+      files.slice(0, 6).map(readCompressedListingImage),
+    );
     setListingImages(images);
     if (images.length) {
       showNotice(`${images.length} listing photo${images.length === 1 ? "" : "s"} ready`);
@@ -3281,7 +3334,9 @@ export default function App() {
 
   async function updateListingEditImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    const images = await Promise.all(files.slice(0, 6).map(readFileAsDataUrl));
+    const images = await Promise.all(
+      files.slice(0, 6).map(readCompressedListingImage),
+    );
     setListingEditImages(images);
     if (images.length) {
       showNotice(`${images.length} updated photo${images.length === 1 ? "" : "s"} ready`);
