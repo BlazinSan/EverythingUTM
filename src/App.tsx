@@ -215,6 +215,17 @@ const requestSortOptions = [
   "Price: high to low",
 ] as const;
 
+const PROFILE_CROP_SIZE = 320;
+
+const busAppliesToOptions = [
+  "Regular semester campus shuttle service",
+  "Weekday campus shuttle service",
+  "Weekend campus shuttle service",
+  "Tuesday and Thursday only",
+  "Semester break service",
+  "All UTM students",
+];
+
 const moduleSlugs: Record<ModuleKey, string> = {
   home: "home",
   marketplace: "marketplace",
@@ -882,24 +893,25 @@ function sanitizeNameInput(value: string) {
 function sanitizeAgeInput(value: string) {
   const numeric = value.replace(/\D/g, "").slice(0, 3);
   if (!numeric) return "";
-  return String(Math.min(120, Number(numeric)));
+  const age = Number(numeric);
+  if (!Number.isFinite(age)) return "";
+  return String(Math.min(120, Math.max(16, age)));
 }
 
 function sanitizeUsername(value: string) {
   return value
     .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "")
+    .replace(/[^a-z0-9@~_-]+/g, "")
     .slice(0, 24);
 }
 
 function usernameFromHash(hash = window.location.hash) {
-  const match = hash.match(/^#\/?user\/([a-z0-9_]{3,24})$/i);
-  return match ? match[1].toLowerCase() : "";
+  const match = hash.match(/^#\/?user\/([^/?#]{3,64})$/i);
+  return match ? sanitizeUsername(decodeURIComponent(match[1])) : "";
 }
 
 function hashForUsername(username: string) {
-  return `#user/${sanitizeUsername(username)}`;
+  return `#user/${encodeURIComponent(sanitizeUsername(username))}`;
 }
 
 function consumeRateLimit(key: string, maxHits: number, windowMs: number) {
@@ -1433,6 +1445,14 @@ function isProfileSaved(profile: Profile) {
   );
 }
 
+function usernameDisplay(value?: string) {
+  const username = sanitizeUsername(value ?? "");
+  if (!username) {
+    return "";
+  }
+  return username.startsWith("@") ? username : `@${username}`;
+}
+
 function isDemoName(value?: string) {
   return Boolean(value && demoNames.has(value.trim()));
 }
@@ -1813,7 +1833,10 @@ function PersonAvatar({
     .toUpperCase();
 
   return (
-    <span className="person-avatar" style={{ width: size, height: size }}>
+    <span
+      className={`person-avatar ${image ? "has-image" : "is-empty"}`}
+      style={{ width: size, height: size }}
+    >
       {image ? <img src={image} alt="" /> : <span>{initials || "UT"}</span>}
     </span>
   );
@@ -2037,8 +2060,6 @@ export default function App() {
   const [selectedProfileName, setSelectedProfileName] = useState(profile.name);
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [reviewDraft, setReviewDraft] = useState({ rating: "5", body: "" });
-  const [adminDraft, setAdminDraft] = useState({ email: "", passcode: "" });
-  const [adminSession, setAdminSession] = useState(false);
   const [bannedUsers, setBannedUsers] = useLocalStorageState<string[]>(
     "everything-utm:banned-users",
     [],
@@ -2058,7 +2079,7 @@ export default function App() {
   const [profileCropZoom, setProfileCropZoom] = useState(1);
   const [profileCropOffsetX, setProfileCropOffsetX] = useState(0);
   const [profileCropOffsetY, setProfileCropOffsetY] = useState(0);
-  const [profileCropSize, setProfileCropSize] = useState(320);
+  const [replyFlashMessageId, setReplyFlashMessageId] = useState<string | null>(null);
   
   const [deleteAccountArmed, setDeleteAccountArmed] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -2077,6 +2098,10 @@ export default function App() {
     null,
   );
   const requestFormRef = useRef<HTMLElement | null>(null);
+  const convexAuthStateRef = useRef({
+    isAuthenticated: false,
+    isLoading: true,
+  });
 
   const profileData: Profile = { ...appUser, ...profile };
   const publicProfiles = useMemo(
@@ -2094,8 +2119,7 @@ export default function App() {
     [publicProfileRows],
   );
   const currentUserId = user?.id ?? localIdentity;
-  const currentDisplayName =
-    profileData.name.trim() || user?.fullName || user?.firstName || "New UTM user";
+  const currentDisplayName = profileData.name.trim() || "New UTM user";
   const appSettings: AppSettings = {
     ...defaultSettings,
     ...settings,
@@ -2104,7 +2128,6 @@ export default function App() {
   const profileLoading = isSignedIn && remoteProfileRow === undefined;
   const profileSetupRequired =
     isSignedIn &&
-    convexAuthenticated &&
     !profileLoading &&
     !isProfileSaved(profileData);
   const t = (key: string) =>
@@ -2125,7 +2148,7 @@ export default function App() {
       const username = sanitizeUsername(entry.username ?? "");
       if (username) {
         directory.set(username, entry);
-        directory.set(`@${username}`, entry);
+        directory.set(usernameDisplay(username), entry);
       }
     };
     if (profileData.name.trim() || profileData.username) {
@@ -2151,7 +2174,7 @@ export default function App() {
           entityName === profileData.name),
     );
   const requestedProfile = getProfile(
-    selectedProfileName || profileData.name || `@${profileData.username ?? ""}`,
+    selectedProfileName || profileData.name || usernameDisplay(profileData.username),
   );
   const viewingOwnProfile =
     !selectedProfileName ||
@@ -2184,10 +2207,10 @@ export default function App() {
     hasUnsavedProfileChanges;
   const editingOwnProfile =
     viewingOwnProfile && (profileEditMode || profileSetupRequired);
-  const adminUnlocked = isOwner || adminSession;
+  const adminUnlocked = isOwner;
   const currentUserBanKeys = [
     currentUserId,
-    profileData.username ? `@${sanitizeUsername(profileData.username)}` : "",
+    usernameDisplay(profileData.username),
     profileData.name,
     currentUserEmail,
   ].filter(Boolean);
@@ -2212,10 +2235,17 @@ export default function App() {
     () =>
       familyProfiles.length
         ? familyProfiles.map((entry) => ({
-            src: entry.profilePicture || "/everythingutm-icon.png",
-            alt: entry.name || `@${entry.username}`,
+            src:
+              entry.profilePicture ||
+              "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Ccircle cx='160' cy='160' r='132' fill='%23232b37'/%3E%3Ccircle cx='160' cy='128' r='48' fill='%236f7888'/%3E%3Cpath d='M76 262c18-58 150-58 168 0' fill='%236f7888'/%3E%3C/svg%3E",
+            alt: entry.name || usernameDisplay(entry.username),
           }))
-        : [{ src: "/everythingutm-icon.png", alt: "EverythingUTM" }],
+        : [
+            {
+              src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Ccircle cx='160' cy='160' r='132' fill='%23232b37'/%3E%3C/svg%3E",
+              alt: "Empty profile placeholder",
+            },
+          ],
     [familyProfiles],
   );
   const reelItems = useMemo(
@@ -2237,6 +2267,40 @@ export default function App() {
   function showNotice(message: string, tone: "success" | "error" = "success") {
     setNoticeTone(tone);
     setNotice(message);
+  }
+
+  useEffect(() => {
+    convexAuthStateRef.current = {
+      isAuthenticated: convexAuthenticated,
+      isLoading: convexAuthLoading,
+    };
+  }, [convexAuthenticated, convexAuthLoading]);
+
+  async function waitForConvexAuthReady(timeoutMs = 7000) {
+    if (convexAuthStateRef.current.isAuthenticated) {
+      return true;
+    }
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      if (convexAuthStateRef.current.isAuthenticated) {
+        return true;
+      }
+      if (
+        !convexAuthStateRef.current.isLoading &&
+        Date.now() - startedAt > 1500
+      ) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function showConvexAuthError(action: "save" | "delete") {
+    showNotice(
+      `Secure account sync is not connected yet, so profile ${action} cannot finish. Sign out and back in after the Clerk + Convex integration is configured.`,
+      "error",
+    );
   }
 
   function ensureUserCanPost() {
@@ -2273,16 +2337,16 @@ export default function App() {
           profileSaved:
             remoteProfileRow?.saved ?? storedProfile.profileSaved ?? true,
         })
-      : emptyProfile({
-          username: sanitizeUsername(user?.username ?? ""),
-          name: user?.fullName ?? "",
-          profilePicture: user?.imageUrl ?? "",
+        : emptyProfile({
+          username: "",
+          name: "",
+          profilePicture: "",
           profileSaved: false,
         });
     setProfile(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
     setProfileDraft(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
     setSelectedProfileName(
-      nextProfile.username ? `@${nextProfile.username}` : nextProfile.name,
+      usernameDisplay(nextProfile.username) || nextProfile.name,
     );
     setProfileEditMode(!isProfileSaved(nextProfile));
   }, [isSignedIn, remoteProfileRow, setProfile, user]);
@@ -2326,14 +2390,14 @@ export default function App() {
     if (!username || !isSignedIn) {
       return;
     }
-    const match = profileDirectory.get(username) ?? profileDirectory.get(`@${username}`);
+    const match = profileDirectory.get(username) ?? profileDirectory.get(usernameDisplay(username));
     if (!match) {
       if (publicProfileRows !== undefined) {
         setRouteNotFound(true);
       }
       return;
     }
-    setSelectedProfileName(`@${username}`);
+    setSelectedProfileName(usernameDisplay(username));
     setProfileDraft({ ...match });
     setProfileEditMode(false);
     setActiveModuleState("profile");
@@ -2352,7 +2416,7 @@ export default function App() {
       return;
     }
     lastProfileSetupUserIdRef.current = userId;
-    setSelectedProfileName(profileData.username ? `@${profileData.username}` : profileData.name);
+    setSelectedProfileName(usernameDisplay(profileData.username) || profileData.name);
     setProfileDraft({ ...profileData });
     setProfileEditMode(!isProfileSaved(profileData));
     navigateToModule("profile", { skipProfileGuard: true });
@@ -2762,7 +2826,7 @@ export default function App() {
       const haystack = [
         profile.name,
         username,
-        `@${username}`,
+        usernameDisplay(username),
         profile.faculty,
         profile.matricNumber,
       ]
@@ -2772,10 +2836,10 @@ export default function App() {
         results.push({
           id: `user-${username}`,
           module: "profile",
-          title: profile.name || `@${username}`,
-          detail: `User profile · @${username}`,
+          title: profile.name || usernameDisplay(username),
+          detail: `User profile · ${usernameDisplay(username)}`,
           action: () => {
-            setSelectedProfileName(`@${username}`);
+            setSelectedProfileName(usernameDisplay(username));
             setProfileDraft(emptyProfile(profile));
             navigateToModule("profile", { skipProfileGuard: true });
             window.history.pushState(null, "", `/${hashForUsername(username)}`);
@@ -3106,9 +3170,14 @@ export default function App() {
     const dx = event.clientX - start.x;
     const dy = Math.abs(event.clientY - start.y);
     if (dx > 58 && dy < 70) {
+      setReplyFlashMessageId(message.id);
+      window.setTimeout(() => {
+        setReplyFlashMessageId((current) =>
+          current === message.id ? null : current,
+        );
+      }, 520);
       setReplyingToMessage(message);
       setMessageActionId(null);
-      showNotice(`Replying to ${message.author}`);
     }
   }
 
@@ -3270,7 +3339,7 @@ export default function App() {
     }
     const entry = getProfile(name);
     const username = sanitizeUsername(entry.username ?? "");
-    setSelectedProfileName(username ? `@${username}` : name);
+    setSelectedProfileName(username ? usernameDisplay(username) : name);
     setProfileDraft({ ...entry });
     setProfileEditMode(false);
     navigateToModule("profile", { skipProfileGuard: true });
@@ -3284,7 +3353,7 @@ export default function App() {
       return;
     }
     const username = sanitizeUsername(profileData.username ?? "");
-    setSelectedProfileName(username ? `@${username}` : profileData.name);
+    setSelectedProfileName(username ? usernameDisplay(username) : profileData.name);
     setProfileDraft({ ...profileData });
     setProfileEditMode(edit || profileSetupRequired || !isProfileSaved(profileData));
     navigateToModule("profile", { skipProfileGuard: true });
@@ -3358,6 +3427,8 @@ export default function App() {
     setMarketplace((current) => [item, ...current]);
     setListingDraft(initialListing);
     setListingImages([]);
+    setMarketCategory("All");
+    setSelectedListingId(item.id);
     showNotice("Listing published");
     addNotification("Listing published", `${item.title} is now live in Marketplace.`, "marketplace");
   }
@@ -3899,23 +3970,6 @@ export default function App() {
     return true;
   }
 
-  function handleAdminLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const cleanEmail = sanitizePlainText(adminDraft.email, 120).toLowerCase();
-    const expectedPasscode = String(import.meta.env.VITE_ADMIN_PASSCODE || "");
-    if (!expectedPasscode) {
-      showNotice("Admin passcode is not configured. Sign in with the owner account instead.", "error");
-      return;
-    }
-    if (cleanEmail !== ownerEmail || adminDraft.passcode !== expectedPasscode) {
-      showNotice("Admin credentials were not accepted", "error");
-      return;
-    }
-    setAdminSession(true);
-    setAdminDraft({ email: "", passcode: "" });
-    showNotice("Admin gateway unlocked");
-  }
-
   function adminDeleteMessage(messageId: string) {
     if (!requireAdmin()) return;
     const message = messages.find((entry) => entry.id === messageId);
@@ -3947,14 +4001,18 @@ export default function App() {
   function toggleAdminBan(profileEntry: Profile) {
     if (!requireAdmin()) return;
     const username = sanitizeUsername(profileEntry.username ?? "");
-    const key = username ? `@${username}` : profileEntry.name;
+    const key = username ? usernameDisplay(username) : profileEntry.name;
     if (!key) return;
+    const isBanned = bannedUsers.includes(key);
+    if (!window.confirm(`${isBanned ? "Unban" : "Ban"} ${profileEntry.name || key}?`)) {
+      return;
+    }
     setBannedUsers((current) =>
       current.includes(key)
         ? current.filter((entry) => entry !== key)
         : [...current, key],
     );
-    showNotice(bannedUsers.includes(key) ? "User unbanned" : "User banned");
+    showNotice(isBanned ? "User unbanned" : "User banned");
   }
 
   function clearBusDocumentDraft() {
@@ -4054,11 +4112,17 @@ export default function App() {
 
   function adminRejectPaper(paperId: string) {
     if (!requireAdmin()) return;
+    const paper = papers.find((entry) => entry.id === paperId);
+    if (!paper) return;
+    if (!window.confirm(`Reject "${paper.code}: ${paper.title}"?`)) return;
     rejectPaper(paperId);
   }
 
   function adminApprovePaper(paperId: string) {
     if (!requireAdmin()) return;
+    const paper = papers.find((entry) => entry.id === paperId);
+    if (!paper) return;
+    if (!window.confirm(`Approve "${paper.code}: ${paper.title}" for students to see?`)) return;
     approvePaper(paperId);
   }
 
@@ -4450,9 +4514,20 @@ export default function App() {
       setProfileCropZoom(1);
       setProfileCropOffsetX(0);
       setProfileCropOffsetY(0);
-      setProfileCropSize(320);
     };
     reader.readAsDataURL(file);
+  }
+
+  function editCurrentProfilePicture() {
+    const currentPicture = profileDraft.profilePicture || profileData.profilePicture;
+    if (!currentPicture) {
+      showNotice("Add a profile picture before editing it.", "error");
+      return;
+    }
+    setProfileCropSource(currentPicture);
+    setProfileCropZoom(1);
+    setProfileCropOffsetX(0);
+    setProfileCropOffsetY(0);
   }
 
   async function applyProfilePictureCrop() {
@@ -4461,44 +4536,50 @@ export default function App() {
     }
     try {
       const image = await loadImage(profileCropSource);
-      const cropSide =
-        Math.min(image.naturalWidth, image.naturalHeight) / profileCropZoom;
-      const maxLeft = Math.max(0, image.naturalWidth - cropSide);
-      const maxTop = Math.max(0, image.naturalHeight - cropSide);
-      const left = Math.min(
-        maxLeft,
-        Math.max(0, maxLeft / 2 - (profileCropOffsetX / 100) * (maxLeft / 2)),
-      );
-      const top = Math.min(
-        maxTop,
-        Math.max(0, maxTop / 2 - (profileCropOffsetY / 100) * (maxTop / 2)),
-      );
       const canvas = document.createElement("canvas");
-      canvas.width = profileCropSize;
-      canvas.height = profileCropSize;
+      canvas.width = PROFILE_CROP_SIZE;
+      canvas.height = PROFILE_CROP_SIZE;
       const context = canvas.getContext("2d");
       if (!context) {
         throw new Error("Image crop is not supported in this browser");
       }
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, profileCropSize, profileCropSize);
+      const baseScale =
+        Math.max(
+          PROFILE_CROP_SIZE / image.naturalWidth,
+          PROFILE_CROP_SIZE / image.naturalHeight,
+        ) * profileCropZoom;
+      const drawWidth = image.naturalWidth * baseScale;
+      const drawHeight = image.naturalHeight * baseScale;
+      const offsetX = profileCropOffsetX * 0.8;
+      const offsetY = profileCropOffsetY * 0.8;
+      const left = (PROFILE_CROP_SIZE - drawWidth) / 2 + offsetX;
+      const top = (PROFILE_CROP_SIZE - drawHeight) / 2 + offsetY;
+      context.fillStyle = "#f5f5f5";
+      context.fillRect(0, 0, PROFILE_CROP_SIZE, PROFILE_CROP_SIZE);
       context.drawImage(
         image,
         left,
         top,
-        cropSide,
-        cropSide,
-        0,
-        0,
-        profileCropSize,
-        profileCropSize,
+        drawWidth,
+        drawHeight,
       );
+      context.globalCompositeOperation = "destination-in";
+      context.beginPath();
+      context.arc(
+        PROFILE_CROP_SIZE / 2,
+        PROFILE_CROP_SIZE / 2,
+        PROFILE_CROP_SIZE / 2,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      context.globalCompositeOperation = "source-over";
       setProfileDraft((current) => ({
         ...current,
-        profilePicture: canvas.toDataURL("image/jpeg", 0.88),
+        profilePicture: canvas.toDataURL("image/png"),
       }));
       setProfileCropSource("");
-      showNotice("Cropped profile picture ready to save");
+      showNotice("Profile picture updated. Save profile to keep it.");
     } catch (error) {
       showNotice(
         error instanceof Error ? error.message : "Could not crop profile picture",
@@ -4508,32 +4589,44 @@ export default function App() {
   }
 
   async function saveProfile(): Promise<boolean> {
-    const nextUsername = sanitizeUsername(
-      profileDraft.username || profileDraft.name || user?.username || "",
-    );
+    const nextUsername = sanitizeUsername(profileDraft.username || "");
     const cleanName = sanitizeNameInput(profileDraft.name).trim();
     const cleanAge = sanitizeAgeInput(profileDraft.age);
-    if (!convexAuthenticated) {
-      showNotice("Finishing secure sign-in. Try saving again in a moment.", "error");
+    const cleanContact = sanitizePhoneInput(profileDraft.contactNumber);
+    if (!(await waitForConvexAuthReady())) {
+      showConvexAuthError("save");
       return false;
     }
     if (!cleanName) {
       showNotice("Profile needs your name before saving", "error");
       return false;
     }
-    if (cleanAge && Number(cleanAge) < 16) {
+    if (profileDraft.age && (!cleanAge || Number(cleanAge) < 16)) {
       showNotice("Age must be 16 or above", "error");
       return false;
     }
-    if (nextUsername.length < 3) {
-      showNotice("Choose a username with at least 3 letters or numbers", "error");
+    if (cleanContact && cleanContact.length < 7) {
+      showNotice("Contact number must be at least 7 digits", "error");
+      return false;
+    }
+    if (!/^[a-z0-9@~_-]{3,24}$/.test(nextUsername)) {
+      showNotice("Choose a 3-24 character username using only letters, numbers, @, ~, -, or _", "error");
+      return false;
+    }
+    const currentSavedUsername = sanitizeUsername(profileData.username ?? "");
+    const usernameTaken = publicProfiles.some((entry) => {
+      const entryUsername = sanitizeUsername(entry.username ?? "");
+      return entryUsername === nextUsername && entryUsername !== currentSavedUsername;
+    });
+    if (usernameTaken) {
+      showNotice("That username is already taken. Choose another one.", "error");
       return false;
     }
     const nextProfile = {
       ...profileDraft,
       name: cleanName,
       username: nextUsername,
-      contactNumber: sanitizePhoneInput(profileDraft.contactNumber),
+      contactNumber: cleanContact,
       matricNumber: sanitizePlainText(profileDraft.matricNumber, 24).toUpperCase(),
       faculty: sanitizePlainText(profileDraft.faculty, 120),
       studyYear: sanitizePlainText(profileDraft.studyYear, 40),
@@ -4635,7 +4728,7 @@ export default function App() {
     );
     setProfile(nextProfile);
     setProfileDraft(nextProfile);
-    setSelectedProfileName(`@${nextUsername}`);
+    setSelectedProfileName(usernameDisplay(nextUsername));
     setProfileEditMode(false);
     showNotice("Profile saved");
     addNotification("Profile saved", "Your student profile was updated.", "profile");
@@ -4729,6 +4822,10 @@ export default function App() {
     setDeleteAccountLoading(true);
 
     try {
+      if (!(await waitForConvexAuthReady())) {
+        showConvexAuthError("delete");
+        return;
+      }
       await deleteAccountOnline();
 
       await withTimeout(clerk.signOut(), 4_000, "Sign out after deletion timed out")
@@ -4784,32 +4881,39 @@ export default function App() {
         details: cleanDetails,
       };
 
-      try {
-        await withTimeout(
-          sendBugReportEmail(payload),
-          12_000,
-          "Bug report email timed out",
-        );
-        await createBugReport({ ...payload, emailed: true });
+      const emailResult = await withTimeout(
+        sendBugReportEmail(payload),
+        10_000,
+        "Bug report email timed out",
+      )
+        .then(() => ({ ok: true, error: "" }))
+        .catch((error) => ({
+          ok: false,
+          error:
+            error instanceof Error ? error.message : "Bug report email unavailable",
+        }));
+
+      const reportRecord = emailResult.ok
+        ? { ...payload, emailed: true }
+        : { ...payload, emailed: false, emailError: emailResult.error };
+
+      await withTimeout(
+        createBugReport(reportRecord),
+        5_000,
+        "Bug report database save timed out",
+      ).catch(() => undefined);
+
+      if (emailResult.ok) {
         setBugReportDraft("");
         showNotice("Bug report emailed successfully");
         addNotification("Bug report received", "Thanks for the report.", "settings");
         return;
-      } catch (error) {
-        const emailError =
-          error instanceof Error ? error.message : "Bug report email unavailable";
-        await createBugReport({
-          ...payload,
-          emailed: false,
-          emailError,
-        }).catch(() => undefined);
-
-        showNotice(
-          `Bug report saved, but email delivery failed: ${emailError}`,
-          "error",
-        );
-        return;
       }
+      showNotice(
+        `Bug report could not be emailed: ${emailResult.error}`,
+        "error",
+      );
+      return;
     } finally {
       setBugReportLoading(false);
     }
@@ -6000,15 +6104,12 @@ export default function App() {
                     src={profileCropSource}
                     alt=""
                     style={{
-                      transform: `translate(${profileCropOffsetX / 4}%, ${
-                        profileCropOffsetY / 4
-                      }%) scale(${profileCropZoom})`,
+                      transform: `translate(${profileCropOffsetX * 0.8}px, ${
+                        profileCropOffsetY * 0.8
+                      }px) scale(${profileCropZoom})`,
                     }}
                   />
                 </div>
-                <p className="fine-print">
-                  Output size: {profileCropSize} x {profileCropSize}px
-                </p>
                 <div className="crop-controls">
                   <label>
                     <span>Zoom</span>
@@ -6046,19 +6147,6 @@ export default function App() {
                         setProfileCropOffsetY(Number(event.target.value))
                       }
                     />
-                  </label>
-                  <label>
-                    <span>Preferred size</span>
-                    <select
-                      value={profileCropSize}
-                      onChange={(event) =>
-                        setProfileCropSize(Number(event.target.value))
-                      }
-                    >
-                      <option value={160}>Small - 160 px</option>
-                      <option value={320}>Balanced - 320 px</option>
-                      <option value={512}>Large - 512 px</option>
-                    </select>
                   </label>
                 </div>
                 <div className="card-actions">
@@ -6350,7 +6438,7 @@ export default function App() {
                           isCurrentUserEntity(message.authorId, message.author)
                             ? "is-mine"
                             : ""
-                        }`}
+                        } ${replyFlashMessageId === message.id ? "is-reply-flash" : ""}`}
                         key={message.id}
                         onDoubleClick={() => reactToMessage(message.id, "❤️")}
                         onPointerCancel={() => {
@@ -7924,21 +8012,22 @@ export default function App() {
               ) : (
                 familyProfiles.map((entry) => {
                   const username = sanitizeUsername(entry.username ?? "");
-                  const banned = bannedUsers.includes(username ? `@${username}` : entry.name);
+                  const displayUsername = usernameDisplay(username);
+                  const banned = bannedUsers.includes(displayUsername || entry.name);
                   return (
                     <button
                       className={`panel family-card ${banned ? "is-banned" : ""}`}
                       key={username || entry.name}
                       type="button"
-                      onClick={() => openProfile(username ? `@${username}` : entry.name)}
+                      onClick={() => openProfile(displayUsername || entry.name)}
                     >
                       <PersonAvatar
                         image={entry.profilePicture}
                         name={entry.name || username || "UTM"}
-                        size={58}
+                        size={84}
                       />
-                      <strong>{entry.name || `@${username}`}</strong>
-                      <span>{username ? `@${username}` : "Username not shared"}</span>
+                      <strong>{entry.name || displayUsername}</strong>
+                      <span>{displayUsername || "Username not shared"}</span>
                       <small>{entry.faculty || "Faculty not shared"}</small>
                       {banned && <em>Banned</em>}
                     </button>
@@ -7988,7 +8077,6 @@ export default function App() {
                             onClick={(event) => {
                               event.stopPropagation();
                               setSelectedListingId(item.id);
-                              navigateToModule("marketplace");
                             }}
                           >
                             <img src={item.images?.[0] ?? item.image} alt="" />
@@ -8000,31 +8088,9 @@ export default function App() {
                         autoplay
                         autoplayDelay={2600}
                         pauseOnHover
-                        mobileClickOnly
                       />
                     </Suspense>
                   </div>
-                </section>
-                <section className="panel reels-list">
-                  <div className="panel-heading">
-                    <h2>Swipe queue</h2>
-                    <Layers3 size={18} aria-hidden="true" />
-                  </div>
-                  {reelItems.slice(0, 8).map((item) => (
-                    <button
-                      className="favourite-row"
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedListingId(item.id);
-                        navigateToModule("marketplace");
-                      }}
-                    >
-                      <img src={item.images?.[0] ?? item.image} alt="" />
-                      <span>{item.title}</span>
-                      <strong>{formatListingPrice(item.price)}</strong>
-                    </button>
-                  ))}
                 </section>
               </div>
             )}
@@ -8052,40 +8118,17 @@ export default function App() {
                   <ShieldAlert size={32} aria-hidden="true" />
                 </div>
                 <div className="admin-login-copy">
-                  <h2>EverythingUTM Admin Login</h2>
-                  <p>Enter owner credentials to access moderation and schedule tools.</p>
+                  <h2>EverythingUTM Admin Gateway</h2>
+                  <p>
+                    Admin tools unlock only when the developer account is signed in.
+                    This browser is currently signed in as {currentUserEmail || "an account without an email"}.
+                  </p>
                 </div>
-                <form className="stacked-form" onSubmit={handleAdminLogin}>
-                  <label>
-                    <span>Email address</span>
-                    <input
-                      type="email"
-                      value={adminDraft.email}
-                      onChange={(event) =>
-                        setAdminDraft((draft) => ({
-                          ...draft,
-                          email: event.target.value,
-                        }))
-                      }
-                      placeholder={ownerEmail}
-                    />
-                  </label>
-                  <label>
-                    <span>Admin passcode</span>
-                    <input
-                      type="password"
-                      value={adminDraft.passcode}
-                      onChange={(event) =>
-                        setAdminDraft((draft) => ({
-                          ...draft,
-                          passcode: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <button className="primary-button full-width" type="submit">
-                    <ShieldCheck size={17} aria-hidden="true" />
-                    Login to admin panel
+                <div className="admin-auth-actions">
+                  <UserButton />
+                  <button className="secondary-button full-width" type="button" onClick={signOut}>
+                    <ExternalLink size={16} aria-hidden="true" />
+                    Sign out and use developer account
                   </button>
                   <button
                     className="ghost-button full-width"
@@ -8094,7 +8137,7 @@ export default function App() {
                   >
                     Go back to EverythingUTM
                   </button>
-                </form>
+                </div>
               </section>
             ) : (
               <div className="admin-grid">
@@ -8136,7 +8179,7 @@ export default function App() {
                   <div className="admin-list">
                     {familyProfiles.map((entry) => {
                       const username = sanitizeUsername(entry.username ?? "");
-                      const key = username ? `@${username}` : entry.name;
+                      const key = username ? usernameDisplay(username) : entry.name;
                       const banned = bannedUsers.includes(key);
                       return (
                         <article className="admin-row" key={key}>
@@ -8176,6 +8219,7 @@ export default function App() {
                         placeholder="Schedule title"
                       />
                       <input
+                        type="date"
                         value={busDocumentDraft.effective}
                         onChange={(event) =>
                           setBusDocumentDraft((draft) => ({
@@ -8186,7 +8230,7 @@ export default function App() {
                         placeholder="Effective date"
                       />
                     </div>
-                    <input
+                    <select
                       value={busDocumentDraft.appliesTo}
                       onChange={(event) =>
                         setBusDocumentDraft((draft) => ({
@@ -8194,8 +8238,16 @@ export default function App() {
                           appliesTo: event.target.value,
                         }))
                       }
-                      placeholder="Applies to"
-                    />
+                    >
+                      <option value="">Applies to</option>
+                      {busAppliesToOptions.map((option) => (
+                        <option key={option}>{option}</option>
+                      ))}
+                      {busDocumentDraft.appliesTo &&
+                        !busAppliesToOptions.includes(busDocumentDraft.appliesTo) && (
+                          <option>{busDocumentDraft.appliesTo}</option>
+                        )}
+                    </select>
                     <textarea
                       rows={2}
                       value={busDocumentDraft.summary}
@@ -8394,15 +8446,27 @@ export default function App() {
                   )}
                 </div>
                 {editingOwnProfile && (
-                  <label className="secondary-button profile-upload">
-                    <Camera size={17} aria-hidden="true" />
-                    Change photo
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={updateProfilePicture}
-                    />
-                  </label>
+                  <div className="profile-photo-actions">
+                    {(profileDraft.profilePicture || profileData.profilePicture) && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={editCurrentProfilePicture}
+                      >
+                        <Pencil size={16} aria-hidden="true" />
+                        Edit photo
+                      </button>
+                    )}
+                    <label className="secondary-button profile-upload">
+                      <Camera size={17} aria-hidden="true" />
+                      Change photo
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={updateProfilePicture}
+                      />
+                    </label>
+                  </div>
                 )}
                 <div className="profile-card-text">
                   <h2>
@@ -8490,7 +8554,7 @@ export default function App() {
                                 username: sanitizeUsername(event.target.value),
                               }))
                             }
-                            placeholder="e.g. hasan_utm"
+                            placeholder="e.g. @hasan-utm"
                           />
                         </label>
                       </Step>
@@ -8509,6 +8573,7 @@ export default function App() {
                             </span>
                             <input
                               inputMode="numeric"
+                              minLength={7}
                               pattern="[0-9]*"
                               value={profileDraft.contactNumber}
                               onChange={(event) =>
@@ -8545,9 +8610,9 @@ export default function App() {
                               Age
                             </span>
                             <input
-                              min="16"
-                              max="120"
-                              type="number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              type="text"
                               value={profileDraft.age}
                               onChange={(event) =>
                                 setProfileDraft((current) => ({
@@ -8658,6 +8723,7 @@ export default function App() {
                         </span>
                         <input
                           inputMode="numeric"
+                          minLength={7}
                           pattern="[0-9]*"
                           value={profileDraft.contactNumber}
                           onChange={(event) =>
@@ -8684,7 +8750,7 @@ export default function App() {
                             username: sanitizeUsername(event.target.value),
                           }))
                         }
-                        placeholder="e.g. hasan_utm"
+                        placeholder="e.g. @hasan-utm"
                       />
                     </label>
                     <div className="two-col">
@@ -8756,9 +8822,9 @@ export default function App() {
                           Age
                         </span>
                         <input
-                          min="16"
-                          max="120"
-                          type="number"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          type="text"
                           value={profileDraft.age}
                           onChange={(event) =>
                             setProfileDraft((current) => ({
@@ -8822,7 +8888,7 @@ export default function App() {
                       <UserRound size={15} aria-hidden="true" />
                       Username:{" "}
                       {selectedProfile.username
-                        ? `@${selectedProfile.username}`
+                        ? usernameDisplay(selectedProfile.username)
                         : "Not shared"}
                     </span>
                     <span>

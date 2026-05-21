@@ -153,6 +153,16 @@ export default function Dock({
 }: DockProps) {
   const mouseX = useMotionValue(Infinity);
   const isHovered = useMotionValue(0);
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(pointer: coarse)");
+    if (!query) return undefined;
+    const update = () => setIsCoarsePointer(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   const maxHeight = useMemo(
     () => Math.max(dockHeight, magnification + magnification / 2 + 4),
@@ -162,9 +172,13 @@ export default function Dock({
   const height = useSpring(heightRow, spring);
 
   return (
-    <motion.div style={{ height, scrollbarWidth: "none" }} className="rb-dock-outer">
+    <motion.div
+      style={{ height: isCoarsePointer ? panelHeight : height, scrollbarWidth: "none" }}
+      className="rb-dock-outer"
+    >
       <motion.div
         onMouseMove={({ pageX }) => {
+          if (isCoarsePointer) return;
           isHovered.set(1);
           mouseX.set(pageX);
         }}
@@ -189,6 +203,7 @@ export default function Dock({
             baseItemSize={baseItemSize}
           >
             <DockIcon>{item.icon}</DockIcon>
+            <span className="rb-dock-inline-label">{item.label}</span>
             <DockLabel>{item.label}</DockLabel>
           </DockItem>
         ))}

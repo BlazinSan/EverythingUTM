@@ -88,8 +88,8 @@ export const upsertCurrent = mutation({
     const { userId, clerkUserId, email } = await requireUser(ctx);
     const username = args.username.trim();
     const usernameNormalized = normalizeUsername(username);
-    if (!/^[a-z0-9_]{3,24}$/.test(usernameNormalized)) {
-      throw new Error("Username must be 3-24 letters, numbers, or underscores.");
+    if (!/^[a-z0-9@~_-]{3,24}$/.test(usernameNormalized)) {
+      throw new Error("Username must be 3-24 characters using only letters, numbers, @, ~, -, or _.");
     }
 
     const existingByUsername = await ctx.db
