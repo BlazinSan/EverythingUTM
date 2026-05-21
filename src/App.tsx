@@ -4644,7 +4644,7 @@ export default function App() {
         /must be signed in|auth|token|jwt|clerk/i.test(message);
       showNotice(
         authLikeFailure
-          ? "Convex rejected the Clerk session token. Make sure the Clerk JWT template is named convex, then deploy the Convex auth config and sign in again."
+          ? "Convex rejected the Clerk session token. Activate Clerk's Convex integration or use a JWT template named convex, deploy the Convex auth config, then sign in again."
           : message,
         "error",
       );
