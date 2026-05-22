@@ -43,6 +43,7 @@ export type MarketplaceItem = {
   description: string;
   image: string;
   images?: string[];
+  imageFileIds?: string[];
   tags: string[];
   createdAt: string;
   sold?: boolean;
@@ -75,8 +76,10 @@ export type ChatMessage = {
   };
   content: string;
   image?: string;
+  imageFileId?: string;
   attachments?: ChatAttachment[];
   voiceUrl?: string;
+  voiceFileId?: string;
   voiceDuration?: number;
   time: string;
   editedAt?: string;
@@ -90,6 +93,7 @@ export type ChatAttachment = {
   kind: "image" | "video" | "file";
   type: string;
   url: string;
+  fileId?: string;
   size: number;
 };
 
@@ -169,6 +173,8 @@ export type ServiceRequest = {
   status: "Open" | "Matched" | "Paid" | "Completed";
   createdAt?: string;
   editedAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
   driver?: string;
   driverId?: string;
   driverAvatar?: string;
@@ -187,6 +193,7 @@ export type Profile = {
   age: string;
   sex: string;
   profilePicture: string;
+  profilePictureFileId?: string;
   wallet: number;
 };
 

@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 async function requireUser(ctx: QueryCtx | MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
@@ -18,14 +19,38 @@ function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
 
-function withoutLargeProfileMedia(profile: unknown) {
+function isDataUrl(value: unknown) {
+  return typeof value === "string" && value.startsWith("data:");
+}
+
+async function withProfileMedia(ctx: QueryCtx, profile: unknown) {
   if (!profile || typeof profile !== "object") {
     return profile;
   }
-  return {
-    ...(profile as Record<string, unknown>),
-    profilePicture: "",
-  };
+  const copy = { ...(profile as Record<string, unknown>) };
+  const fileId = copy.profilePictureFileId;
+  if (typeof fileId === "string" && fileId) {
+    copy.profilePicture =
+      (await ctx.storage.getUrl(fileId as Id<"_storage">)) ?? "";
+  } else if (isDataUrl(copy.profilePicture)) {
+    copy.profilePicture = "";
+  }
+  return copy;
+}
+
+function sanitizeProfileForStorage(profile: unknown) {
+  const copy =
+    profile && typeof profile === "object"
+      ? { ...(profile as Record<string, unknown>) }
+      : {};
+  if (isDataUrl(copy.profilePicture)) {
+    copy.profilePicture = "";
+  }
+  const serialized = JSON.stringify(copy);
+  if (serialized.length > 50_000 || serialized.includes("data:")) {
+    throw new Error("Profile data is too large. Upload media through file storage first.");
+  }
+  return copy;
 }
 
 export const getCurrent = query({
@@ -35,10 +60,13 @@ export const getCurrent = query({
     if (!identity) {
       return null;
     }
-    return await ctx.db
+    const row = await ctx.db
       .query("profiles")
       .withIndex("by_userId", (q) => q.eq("userId", identity.tokenIdentifier))
       .unique();
+    return row
+      ? { ...row, profile: await withProfileMedia(ctx, row.profile) }
+      : null;
   },
 });
 
@@ -49,17 +77,17 @@ export const listPublic = query({
     if (!identity) {
       return [];
     }
-    return await ctx.db
+    const rows = await ctx.db
       .query("profiles")
       .withIndex("by_userId")
       .order("desc")
-      .take(50)
-      .then((rows) =>
-        rows.map((row) => ({
+      .take(50);
+    return await Promise.all(
+      rows.map(async (row) => ({
           ...row,
-          profile: withoutLargeProfileMedia(row.profile),
+          profile: await withProfileMedia(ctx, row.profile),
         })),
-      );
+    );
   },
 });
 
@@ -76,7 +104,7 @@ export const getByUsername = query({
         q.eq("usernameNormalized", normalizeUsername(args.username)),
       )
       .unique();
-    return row ? { ...row, profile: withoutLargeProfileMedia(row.profile) } : null;
+    return row ? { ...row, profile: await withProfileMedia(ctx, row.profile) } : null;
   },
 });
 
@@ -93,10 +121,12 @@ export const search = query({
         q.search("username", args.query).eq("saved", true),
       )
       .take(8);
-    return rows.map((row) => ({
-      ...row,
-      profile: withoutLargeProfileMedia(row.profile),
-    }));
+    return await Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        profile: await withProfileMedia(ctx, row.profile),
+      })),
+    );
   },
 });
 
@@ -128,8 +158,8 @@ export const upsertCurrent = mutation({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .unique();
 
-    const profile = {
-      ...args.profile,
+    const profile: Record<string, unknown> = {
+      ...sanitizeProfileForStorage(args.profile),
       username: usernameNormalized,
       profileSaved: true,
     };

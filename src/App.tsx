@@ -34,7 +34,6 @@ import { api } from "../convex/_generated/api";
 import Dock from "./components/Dock";
 import Stepper, { Step } from "./components/Stepper";
 import ChatInputBar from "./components/ChatInputBar";
-import CurtainThemeToggle from "./components/CurtainThemeToggle";
 import FocusRail from "./components/FocusRail";
 import {
   ArrowUpDown,
@@ -74,6 +73,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Mic,
+  Moon,
   Navigation,
   PackagePlus,
   Paperclip,
@@ -91,6 +91,7 @@ import {
   Share2,
   Star,
   Store,
+  Sun,
   ThumbsUp,
   Trash2,
   Upload,
@@ -102,7 +103,7 @@ import {
 import {
   appUser,
   campusCategories,
-  campusLocations,
+  campusLocations as seedCampusLocations,
   busScheduleDocuments,
   busScheduleRoutes,
   chatChannels,
@@ -114,6 +115,7 @@ import {
 import { isConvexConfigured } from "./lib/convex";
 import type {
   AppSettings,
+  Answer,
   BusScheduleDocument,
   CampusLocation,
   ChatAttachment,
@@ -253,7 +255,12 @@ const moduleSlugs: Record<ModuleKey, string> = {
 const moduleKeysBySlug = Object.fromEntries(
   Object.entries(moduleSlugs).map(([key, slug]) => [slug, key]),
 ) as Record<string, ModuleKey>;
-const moduleKeySet = new Set(Object.keys(moduleSlugs));
+
+const moduleKeySet = new Set<ModuleKey>(Object.keys(moduleSlugs) as ModuleKey[]);
+
+function isModuleKey(value: string): value is ModuleKey {
+  return moduleKeySet.has(value as ModuleKey);
+}
 
 const regularBusTimes = [
   "07:00",
@@ -817,38 +824,38 @@ function parseTransportSchedule(value: string) {
   };
 }
 
-function moduleFromHash(hash = window.location.hash) {
-  const slug = hash.replace(/^#\/?/, "").trim();
+function normalizePath(path = window.location.pathname) {
+  return path.replace(/^\/+|\/+$/g, "");
+}
+
+function moduleFromPath(path = window.location.pathname) {
+  const slug = normalizePath(path) || "home";
   return moduleKeysBySlug[slug] ?? null;
 }
 
-function hashForModule(module: ModuleKey) {
-  return `#${moduleSlugs[module]}`;
+function pathForModule(module: ModuleKey) {
+  return `/${moduleSlugs[module]}`;
 }
 
-function isModuleKey(value: string): value is ModuleKey {
-  return moduleKeySet.has(value);
-}
-
-function appUrlForHash(hash: string) {
+function appUrlForPath(path: string) {
   const url = new URL(window.location.href);
-  url.pathname = "/";
+  url.pathname = path;
   url.search = "";
-  url.hash = hash;
+  url.hash = "";
   return url.toString();
 }
 
 function moduleDestinationUrl(module: ModuleKey) {
-  return appUrlForHash(hashForModule(module));
+  return appUrlForPath(pathForModule(module));
 }
 
 function usernameDestinationUrl(username: string) {
-  return appUrlForHash(hashForUsername(username));
+  return appUrlForPath(pathForUsername(username));
 }
 
 function listingDestinationUrl(itemId: string) {
   const url = new URL(window.location.href);
-  url.pathname = "/";
+  url.pathname = "/marketplace";
   url.search = "";
   url.hash = "";
   url.searchParams.set("listing", itemId);
@@ -949,20 +956,18 @@ function hasAllowedSearchParams() {
   );
 }
 
-function isKnownHash(hash = window.location.hash) {
-  if (!hash) {
+function isKnownPath(path = window.location.pathname) {
+  if (path === "/" || path === "/index.html") {
     return true;
   }
-  if (isAuthCallbackHash(hash) || hash.includes("reset-password") || usernameFromHash(hash)) {
+  if (usernameFromPath(path)) {
     return true;
   }
-  return Boolean(moduleFromHash(hash));
+  return Boolean(moduleFromPath(path));
 }
 
 function isInvalidAppRoute() {
-  const validPath =
-    window.location.pathname === "/" || window.location.pathname === "/index.html";
-  return !validPath || !hasAllowedSearchParams() || !isKnownHash();
+  return !hasAllowedSearchParams() || !isKnownPath();
 }
 
 function sanitizePhoneInput(value: string) {
@@ -1007,13 +1012,13 @@ function sanitizeUsername(value: string) {
     .slice(0, 24);
 }
 
-function usernameFromHash(hash = window.location.hash) {
-  const match = hash.match(/^#\/?user\/([^/?#]{3,64})$/i);
+function usernameFromPath(path = window.location.pathname) {
+  const match = path.match(/^\/?user\/([^/?#]{3,64})\/?$/i);
   return match ? sanitizeUsername(decodeURIComponent(match[1])) : "";
 }
 
-function hashForUsername(username: string) {
-  return `#user/${encodeURIComponent(sanitizeUsername(username))}`;
+function pathForUsername(username: string) {
+  return `/user/${encodeURIComponent(sanitizeUsername(username))}`;
 }
 
 function consumeRateLimit(key: string, maxHits: number, windowMs: number) {
@@ -1094,6 +1099,22 @@ function readFileAsDataUrl(file: File) {
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
+}
+
+function isDataUrl(value?: string) {
+  return Boolean(value?.startsWith("data:"));
+}
+
+async function dataUrlToBlob(dataUrl: string) {
+  const response = await fetch(dataUrl);
+  return await response.blob();
+}
+
+function safeRemoteMediaUrl(value?: string) {
+  if (!value || isDataUrl(value)) {
+    return "";
+  }
+  return value;
 }
 
 function isUploadTooLarge(file: File) {
@@ -1542,20 +1563,67 @@ function normalizeBudgetForType(
   return sanitizeBudgetInput(value);
 }
 
-async function translateToEnglish(text: string) {
+function protectTranslationTerms(text: string, extraTerms: string[] = []) {
+  const terms = [
+    ...extraTerms,
+    ...seedCampusLocations.map((location) => location.name),
+    ...transportPlaceFilters.filter((place) => place !== "All"),
+    "UTM",
+    "EverythingUTM",
+    "Skudai",
+    "Johor Bahru",
+    "Kolej",
+    "Center Point",
+    "Jalan Amal",
+    "KP",
+    "CP",
+    "KTC",
+    "KTDI",
+    "KTHO",
+    "KTR",
+    "PSZ",
+    "BDR",
+  ]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  let prepared = text.replace(/\b[A-Z]{2,5}\d{3,4}\b/g, (match) => `__KEEP_${match}__`);
+  const restoreMap = new Map<string, string>();
+  terms.forEach((term, index) => {
+    const token = `__TERM_${index}__`;
+    const pattern = new RegExp(
+      term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "gi",
+    );
+    prepared = prepared.replace(pattern, (match) => {
+      restoreMap.set(token, match);
+      return token;
+    });
+  });
+  const restore = (translated: string) => {
+    let restored = translated.replace(/__KEEP_([A-Z]{2,5}\d{3,4})__/g, "$1");
+    restoreMap.forEach((term, token) => {
+      restored = restored.split(token).join(term);
+    });
+    return restored;
+  };
+  return { prepared, restore };
+}
+
+async function translateToEnglish(text: string, protectedTerms: string[] = []) {
   if (!text.trim()) {
     return "";
   }
+  const { prepared, restore } = protectTranslationTerms(text, protectedTerms);
   const response = await fetch(
     `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(
-      text,
+      prepared,
     )}`,
   );
   if (!response.ok) {
     throw new Error("Translation failed");
   }
   const data = (await response.json()) as Array<Array<Array<string>>>;
-  return data[0]?.map((part) => part[0]).join("") || text;
+  return restore(data[0]?.map((part) => part[0]).join("") || text);
 }
 
 const developerSupportUrl =
@@ -2062,7 +2130,7 @@ export default function App() {
     user?.emailAddresses?.[0]?.emailAddress ??
     "";
   const [activeModule, setActiveModuleState] = useState<ModuleKey>(
-    () => moduleFromHash() ?? "home",
+    () => moduleFromPath() ?? "home",
   );
   const [pageDirection, setPageDirection] = useState<"forward" | "back">(
     "forward",
@@ -2150,14 +2218,57 @@ export default function App() {
     api.questions.list,
     isSignedIn ? {} : "skip",
   ) as Question[] | undefined;
+  const onlineProfileReviews = useQuery(
+    api.profileReviews.list,
+    isSignedIn ? {} : "skip",
+  ) as ProfileReview[] | undefined;
+  const onlineMarketplace = useQuery(
+    api.marketplace.list,
+    isSignedIn ? {} : "skip",
+  ) as MarketplaceItem[] | undefined;
+  const onlineMessages = useQuery(
+    api.chats.list,
+    isSignedIn ? {} : "skip",
+  ) as ChatMessage[] | undefined;
+  const onlineRequests = useQuery(
+    api.requests.list,
+    isSignedIn ? {} : "skip",
+  ) as ServiceRequest[] | undefined;
+  const customCampusLocations = useQuery(
+    api.campusPlaces.list,
+    isSignedIn ? {} : "skip",
+  ) as CampusLocation[] | undefined;
   const upsertCurrentProfile = useMutation(api.profiles.upsertCurrent);
   const deleteCurrentProfileData = useMutation(api.profiles.deleteCurrentData);
   const createBugReport = useMutation(api.bugReports.create);
   const sendBugReportEmail = useAction(api.bugReports.sendEmail);
+  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const saveAppPreferences = useMutation(api.appState.upsert);
   const deleteLegacyHeavyAppState = useMutation(api.appState.deleteLegacyHeavyState);
   const sendListingReportEmail = useAction(api.bugReports.sendListingReportEmail);
   const addOnlineQuestion = useMutation(api.questions.add);
+  const updateOnlineQuestion = useMutation(api.questions.update);
+  const addOnlineAnswer = useMutation(api.questions.addAnswer);
+  const setOnlineQuestionVotes = useMutation(api.questions.setVotes);
+  const setOnlineAnswerHelpful = useMutation(api.questions.setAnswerHelpful);
+  const setOnlineQuestionResolved = useMutation(api.questions.setResolved);
+  const removeOnlineQuestion = useMutation(api.questions.remove);
+  const adminRemoveOnlineQuestion = useMutation(api.questions.adminRemove);
+  const addOnlineProfileReview = useMutation(api.profileReviews.add);
+  const upsertOnlineListing = useMutation(api.marketplace.upsert);
+  const markOnlineListingDeleted = useMutation(api.marketplace.markDeleted);
+  const adminMarkOnlineListingDeleted = useMutation(api.marketplace.adminMarkDeleted);
+  const setOnlineListingSold = useMutation(api.marketplace.setSold);
+  const addOnlineChatMessage = useMutation(api.chats.add);
+  const updateOnlineChatContent = useMutation(api.chats.updateContent);
+  const setOnlineChatEngagement = useMutation(api.chats.setEngagement);
+  const removeOnlineChatMessage = useMutation(api.chats.remove);
+  const adminRemoveOnlineChatMessage = useMutation(api.chats.adminRemove);
+  const upsertCampusPlace = useMutation(api.campusPlaces.upsert);
+  const upsertOnlineRequest = useMutation(api.requests.upsert);
+  const markOnlineRequestDeleted = useMutation(api.requests.markDeleted);
+  const matchOnlineRequest = useMutation(api.requests.match);
+  const completeOnlineRequest = useMutation(api.requests.complete);
   const deleteCurrentClerkUser = useAction(api.accounts.deleteCurrentClerkUser);
 
   const [marketCategory, setMarketCategory] = useState("All");
@@ -2170,7 +2281,7 @@ export default function App() {
   const [listingEditImages, setListingEditImages] = useState<string[]>([]);
   const [mapCategory, setMapCategory] = useState("All");
   const [selectedLocationId, setSelectedLocationId] = useState(
-    campusLocations[0].id,
+    seedCampusLocations[0].id,
   );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -2183,6 +2294,7 @@ export default function App() {
   const [messageVoice, setMessageVoice] = useState("");
   const [messageVoiceDuration, setMessageVoiceDuration] = useState(0);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [questionDraft, setQuestionDraft] = useState(initialQuestion);
   const [questionSort, setQuestionSort] =
     useState<(typeof questionSortOptions)[number]>("Date posted");
@@ -2256,6 +2368,15 @@ export default function App() {
     summary: "",
     notes: "",
   });
+  const [campusLocationDraft, setCampusLocationDraft] = useState({
+    name: "",
+    category: "Services",
+    area: "",
+    lat: "",
+    lng: "",
+    blurb: "",
+    bestFor: "",
+  });
   const [profileCropSource, setProfileCropSource] = useState("");
   const [profileCropZoom, setProfileCropZoom] = useState(1);
   const [profileCropOffsetX, setProfileCropOffsetX] = useState(0);
@@ -2288,6 +2409,27 @@ export default function App() {
   });
 
   const profileData: Profile = { ...appUser, ...profile };
+  const campusLocations = useMemo(() => {
+    const byId = new Map<string, CampusLocation>();
+    seedCampusLocations.forEach((location) => byId.set(location.id, location));
+    (customCampusLocations ?? []).forEach((location) => {
+      if (location.id) {
+        byId.set(location.id, location);
+      }
+    });
+    return Array.from(byId.values());
+  }, [customCampusLocations]);
+  const campusFilterCategories = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          "All",
+          ...campusCategories.filter((category) => category !== "All"),
+          ...campusLocations.map((location) => location.category),
+        ]),
+      ),
+    [campusLocations],
+  );
   const publicProfiles = useMemo(
     () =>
       (publicProfileRows ?? [])
@@ -2485,6 +2627,15 @@ export default function App() {
   function showNotice(message: string, tone: "success" | "error" = "success") {
     setNoticeTone(tone);
     setNotice(message);
+    if (tone === "error") {
+      document.documentElement.classList.remove("screen-shake");
+      window.setTimeout(() => {
+        document.documentElement.classList.add("screen-shake");
+        window.setTimeout(() => {
+          document.documentElement.classList.remove("screen-shake");
+        }, 460);
+      }, 0);
+    }
   }
 
   useEffect(() => {
@@ -2512,6 +2663,104 @@ export default function App() {
       }
     }
     return false;
+  }
+
+  async function uploadDataUrl(dataUrl: string) {
+    if (!isDataUrl(dataUrl)) {
+      return "";
+    }
+    const blob = await dataUrlToBlob(dataUrl);
+    if (blob.size > MAX_UPLOAD_BYTES) {
+      throw new Error(`Media is larger than ${MAX_UPLOAD_LABEL}.`);
+    }
+    const uploadUrl = await generateUploadUrl({});
+    const response = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": blob.type || "application/octet-stream",
+      },
+      body: blob,
+    });
+    if (!response.ok) {
+      throw new Error("Could not upload media to cloud storage.");
+    }
+    const { storageId } = (await response.json()) as { storageId: string };
+    return storageId;
+  }
+
+  async function uploadOptionalDataUrl(dataUrl?: string) {
+    return dataUrl && isDataUrl(dataUrl) ? uploadDataUrl(dataUrl) : "";
+  }
+
+  async function prepareListingForCloud(
+    item: MarketplaceItem,
+    existingItem?: MarketplaceItem,
+  ) {
+    const images = (item.images?.length ? item.images : [item.image]).filter(Boolean);
+    const imageFileIds = await Promise.all(
+      images.map(async (image, index) => {
+        if (isDataUrl(image)) {
+          return uploadDataUrl(image);
+        }
+        if (existingItem?.images?.[index] === image && existingItem.imageFileIds?.[index]) {
+          return existingItem.imageFileIds[index];
+        }
+        if (item.imageFileIds?.[index]) {
+          return item.imageFileIds[index];
+        }
+        return "";
+      }),
+    );
+    const safeImages = images.map((image) => safeRemoteMediaUrl(image)).filter(Boolean);
+    const cloudItem: MarketplaceItem = {
+      ...item,
+      sellerAvatar: safeRemoteMediaUrl(item.sellerAvatar),
+      image: safeImages[0] ?? "",
+      images: safeImages,
+      imageFileIds: imageFileIds.filter(Boolean),
+    };
+    return {
+      localItem: { ...item, imageFileIds: cloudItem.imageFileIds },
+      cloudItem,
+    };
+  }
+
+  async function prepareMessageForCloud(message: ChatMessage) {
+    const imageFileId = await uploadOptionalDataUrl(message.image);
+    const voiceFileId = await uploadOptionalDataUrl(message.voiceUrl);
+    const attachments = await Promise.all(
+      (message.attachments ?? []).map(async (attachment) => {
+        const fileId = isDataUrl(attachment.url)
+          ? await uploadDataUrl(attachment.url)
+          : attachment.fileId ?? "";
+        return {
+          ...attachment,
+          fileId,
+          url: safeRemoteMediaUrl(attachment.url),
+        };
+      }),
+    );
+    return {
+      ...message,
+      authorAvatar: safeRemoteMediaUrl(message.authorAvatar),
+      image: safeRemoteMediaUrl(message.image),
+      imageFileId: imageFileId || message.imageFileId,
+      voiceUrl: safeRemoteMediaUrl(message.voiceUrl),
+      voiceFileId: voiceFileId || message.voiceFileId,
+      attachments,
+    };
+  }
+
+  async function syncChatMessageToCloud(message: ChatMessage) {
+    const convexReady = await waitForConvexAuthReady(3000);
+    if (!convexReady) {
+      throw new Error("Cloud chat sync is not connected yet.");
+    }
+    const cloudMessage = await prepareMessageForCloud(message);
+    await addOnlineChatMessage({
+      messageId: message.id,
+      message: toConvexJson(cloudMessage),
+    });
   }
 
   function showConvexAuthError(action: "save" | "delete") {
@@ -2617,6 +2866,7 @@ export default function App() {
       return;
     }
     const storedProfile = remoteProfileRow?.profile ?? null;
+    const authProfilePicture = safeRemoteMediaUrl(user?.imageUrl);
     const nextProfile = storedProfile
       ? emptyProfile({
           ...storedProfile,
@@ -2627,9 +2877,12 @@ export default function App() {
         : emptyProfile({
           username: "",
           name: "",
-          profilePicture: "",
+          profilePicture: authProfilePicture,
           profileSaved: false,
         });
+    if (!nextProfile.profilePicture && !nextProfile.profilePictureFileId && authProfilePicture) {
+      nextProfile.profilePicture = authProfilePicture;
+    }
     setProfile(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
     setProfileDraft(isDemoProfile(nextProfile) ? emptyProfile() : nextProfile);
     setSelectedProfileName(
@@ -2642,21 +2895,20 @@ export default function App() {
   }, [currentUserId, isSignedIn, remoteProfileRow, setProfile, user]);
 
   useEffect(() => {
-    setProfileDraft({ ...appUser, ...profile });
-  }, [profile]);
-
-  useEffect(() => {
     const syncRoute = () => {
       const invalid = isInvalidAppRoute();
       setRouteNotFound(invalid);
+
       if (invalid) {
         return;
       }
-      if (usernameFromHash()) {
+
+      if (usernameFromPath()) {
         setActiveModuleState("profile");
         return;
       }
-      const module = moduleFromHash();
+
+      const module = moduleFromPath();
       if (module && module !== activeModule) {
         setActiveModuleState(module);
       }
@@ -2664,19 +2916,19 @@ export default function App() {
 
     syncRoute();
 
-    if (!window.location.hash && !isInvalidAppRoute()) {
-      window.history.replaceState(null, "", hashForModule(activeModule));
+    if (window.location.pathname === "/" && !isInvalidAppRoute()) {
+      window.history.replaceState(null, "", pathForModule(activeModule));
     }
-    window.addEventListener("hashchange", syncRoute);
+
     window.addEventListener("popstate", syncRoute);
+
     return () => {
-      window.removeEventListener("hashchange", syncRoute);
       window.removeEventListener("popstate", syncRoute);
     };
   }, [activeModule]);
 
   useEffect(() => {
-    const username = usernameFromHash();
+    const username = usernameFromPath();
     if (!username || !isSignedIn) {
       return;
     }
@@ -2838,6 +3090,20 @@ export default function App() {
   }, [notice]);
 
   useEffect(() => {
+    if (!isRecordingVoice) {
+      setRecordingDuration(0);
+      return;
+    }
+    const tick = () =>
+      setRecordingDuration(
+        Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000)),
+      );
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [isRecordingVoice]);
+
+  useEffect(() => {
     if (!onlineQuestions) {
       return;
     }
@@ -2861,6 +3127,62 @@ export default function App() {
       return sameStoredState(next, current) ? current : next;
     });
   }, [onlineQuestions, setQuestions]);
+
+  useEffect(() => {
+    if (!onlineProfileReviews) {
+      return;
+    }
+    setProfileReviews((current) => {
+      const next = mergeOnlineAndLocalState(
+        "everything-utm:profile-reviews",
+        onlineProfileReviews,
+        current,
+      );
+      return sameStoredState(next, current) ? current : next;
+    });
+  }, [onlineProfileReviews, setProfileReviews]);
+
+  useEffect(() => {
+    if (!onlineMarketplace) {
+      return;
+    }
+    setMarketplace((current) => {
+      const next = mergeOnlineAndLocalState(
+        "everything-utm:marketplace",
+        onlineMarketplace,
+        current,
+      );
+      return sameStoredState(next, current) ? current : next;
+    });
+  }, [onlineMarketplace, setMarketplace]);
+
+  useEffect(() => {
+    if (!onlineMessages) {
+      return;
+    }
+    setMessages((current) => {
+      const next = mergeOnlineAndLocalState(
+        "everything-utm:messages",
+        onlineMessages,
+        current,
+      );
+      return sameStoredState(next, current) ? current : next;
+    });
+  }, [onlineMessages, setMessages]);
+
+  useEffect(() => {
+    if (!onlineRequests) {
+      return;
+    }
+    setRequests((current) => {
+      const next = mergeOnlineAndLocalState(
+        "everything-utm:requests",
+        onlineRequests,
+        current,
+      );
+      return sameStoredState(next, current) ? current : next;
+    });
+  }, [onlineRequests, setRequests]);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -2976,7 +3298,7 @@ export default function App() {
     return uniqueLocations
       .filter((location) => !input || normalize(location).includes(input))
       .slice(0, 12);
-  }, [listingDraft.location]);
+  }, [campusLocations, listingDraft.location]);
 
   const visibleMarketplace = useMemo(() => {
     const filtered = activeMarketplace.filter((item) => {
@@ -3026,7 +3348,7 @@ export default function App() {
           .includes(search);
       return inCategory && inSearch;
     });
-  }, [mapCategory, search]);
+  }, [campusLocations, mapCategory, search]);
 
   const selectedLocation =
     campusLocations.find((location) => location.id === selectedLocationId) ??
@@ -3273,7 +3595,7 @@ export default function App() {
             setSelectedProfileName(usernameDisplay(username));
             setProfileDraft(emptyProfile(profile));
             navigateToModule("profile", { skipProfileGuard: true });
-            window.history.pushState(null, "", `/${hashForUsername(username)}`);
+            window.history.pushState(null, "", pathForUsername(username));
           },
         });
       }
@@ -3484,7 +3806,17 @@ export default function App() {
         return aTitleMatch - bTitleMatch;
       })
       .slice(0, 8);
-  }, [activeMarketplace, appBusDocuments, messages, papers, publicProfiles, questions, requests, search]);
+  }, [
+    activeMarketplace,
+    appBusDocuments,
+    campusLocations,
+    messages,
+    papers,
+    publicProfiles,
+    questions,
+    requests,
+    search,
+  ]);
 
   function addNotification(
     title: string,
@@ -3534,9 +3866,9 @@ export default function App() {
     );
     setActiveModuleState(module);
     setRouteNotFound(false);
-    const nextHash = hashForModule(module);
-    if (window.location.pathname !== "/" || window.location.hash !== nextHash) {
-      window.history.pushState(null, "", `/${nextHash}`);
+    const nextPath = pathForModule(module);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState(null, "", nextPath);
     }
   }
 
@@ -3721,7 +4053,15 @@ export default function App() {
       [key]: "Translating to English...",
     }));
     try {
-      const translated = await translateToEnglish(text);
+      const translated = await translateToEnglish(text, [
+        profileData.name,
+        profileData.username ?? "",
+        ...publicProfiles.flatMap((entry) => [
+          entry.name,
+          entry.username ?? "",
+          usernameDisplay(entry.username ?? ""),
+        ]),
+      ]);
       setTranslatedItems((current) => ({
         ...current,
         [key]: `English: ${translated}`,
@@ -3794,8 +4134,10 @@ export default function App() {
 
   async function toggleVoiceRecording() {
     if (isRecordingVoice) {
-      mediaRecorderRef.current?.requestData();
-      mediaRecorderRef.current?.stop();
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+      }
       setIsRecordingVoice(false);
       return;
     }
@@ -3807,7 +4149,16 @@ export default function App() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const preferredType = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(
+        stream,
+        preferredType ? { mimeType: preferredType } : undefined,
+      );
       voiceChunksRef.current = [];
       recordingStartedAtRef.current = Date.now();
       recorder.ondataavailable = (event) => {
@@ -3816,10 +4167,19 @@ export default function App() {
         }
       };
       recorder.onstop = () => {
+        const duration = Math.max(
+          1,
+          Math.round((Date.now() - recordingStartedAtRef.current) / 1000),
+        );
         const blob = new Blob(voiceChunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
+          type:
+            recorder.mimeType ||
+            preferredType ||
+            voiceChunksRef.current[0]?.type ||
+            "audio/webm",
         });
         stream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
         if (!blob.size) {
           showNotice("Voice recording was empty. Try recording again.", "error");
           setIsRecordingVoice(false);
@@ -3833,16 +4193,14 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = () => {
           setMessageVoice(String(reader.result));
-          setMessageVoiceDuration(
-            Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000)),
-          );
+          setMessageVoiceDuration(duration);
           setIsRecordingVoice(false);
           showNotice("Voice message ready to send");
         };
         reader.readAsDataURL(blob);
       };
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      recorder.start(250);
       setIsRecordingVoice(true);
       showNotice("Recording voice message");
     } catch {
@@ -3879,7 +4237,7 @@ export default function App() {
     setProfileEditMode(false);
     navigateToModule("profile", { skipProfileGuard: true });
     if (username) {
-      window.history.pushState(null, "", `/${hashForUsername(username)}`);
+      window.history.pushState(null, "", pathForUsername(username));
     }
   }
 
@@ -3892,10 +4250,10 @@ export default function App() {
     setProfileDraft({ ...profileData });
     setProfileEditMode(edit || profileSetupRequired || !isProfileSaved(profileData));
     navigateToModule("profile", { skipProfileGuard: true });
-    window.history.pushState(null, "", `/${hashForModule("profile")}`);
+    window.history.pushState(null, "", pathForModule("profile"));
   }
 
-  function buyListing(item: MarketplaceItem) {
+  async function buyListing(item: MarketplaceItem) {
     if (item.sold) {
       showNotice("This listing is already marked as sold", "error");
       return;
@@ -3915,6 +4273,15 @@ export default function App() {
       content,
       time: new Date().toISOString(),
     };
+    try {
+      await syncChatMessageToCloud(message);
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Purchase chat could not sync online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) => [...current, message]);
     setActiveChannel(channel);
     setSelectedListingId(null);
@@ -3923,7 +4290,7 @@ export default function App() {
     addNotification("Private chat started", `Purchase request sent to ${item.seller}.`, "community");
   }
 
-  function handleListingSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleListingSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ensureUserCanPost()) {
       return;
@@ -3959,7 +4326,24 @@ export default function App() {
       sold: false,
     };
 
-    setMarketplace((current) => [item, ...current]);
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Marketplace cloud sync is not connected yet.");
+      }
+      const { localItem, cloudItem } = await prepareListingForCloud(item);
+      await upsertOnlineListing({
+        listingId: item.id,
+        listing: toConvexJson(cloudItem),
+      });
+      setMarketplace((current) => [localItem, ...current]);
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Listing could not be saved online",
+        "error",
+      );
+      return;
+    }
     setListingDraft(initialListing);
     setListingImages([]);
     resetMarketplaceView();
@@ -3989,7 +4373,7 @@ export default function App() {
     setListingEditImages(item.images?.length ? item.images : [item.image]);
   }
 
-  function saveListingEdit(itemId: string) {
+  async function saveListingEdit(itemId: string) {
     const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can save changes", "error");
@@ -4001,31 +4385,48 @@ export default function App() {
       showNotice("Listing needs a title and description", "error");
       return;
     }
-    setMarketplace((current) =>
-      current.map((item) =>
-        item.id === itemId
-          ? {
-              ...item,
-              title: cleanTitle,
-              category: sanitizePlainText(listingEditDraft.category, 40) || item.category,
-              price: parsePriceInput(listingEditDraft.price),
-              location: sanitizePlainText(listingEditDraft.location, 120) || item.location,
-              fulfillment: listingEditDraft.fulfillment,
-              condition: listingEditDraft.condition,
-              paymentPreference: listingEditDraft.paymentPreference,
-              description: cleanDescription,
-              tags: compactTags(listingEditDraft.tags),
-              image: listingEditImages[0] ?? item.image,
-              images: listingEditImages.length ? listingEditImages : item.images,
-            }
-          : item,
-      ),
-    );
+    const editedListing: MarketplaceItem = {
+      ...listing,
+      title: cleanTitle,
+      category: sanitizePlainText(listingEditDraft.category, 40) || listing.category,
+      price: parsePriceInput(listingEditDraft.price),
+      location: sanitizePlainText(listingEditDraft.location, 120) || listing.location,
+      fulfillment: listingEditDraft.fulfillment,
+      condition: listingEditDraft.condition,
+      paymentPreference: listingEditDraft.paymentPreference,
+      description: cleanDescription,
+      tags: compactTags(listingEditDraft.tags),
+      image: listingEditImages[0] ?? listing.image,
+      images: listingEditImages.length ? listingEditImages : listing.images,
+    };
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Marketplace cloud sync is not connected yet.");
+      }
+      const { localItem, cloudItem } = await prepareListingForCloud(
+        editedListing,
+        listing,
+      );
+      await upsertOnlineListing({
+        listingId: itemId,
+        listing: toConvexJson(cloudItem),
+      });
+      setMarketplace((current) =>
+        current.map((item) => (item.id === itemId ? localItem : item)),
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Listing changes could not sync online",
+        "error",
+      );
+      return;
+    }
     setEditingListingId(null);
     showNotice("Listing updated");
   }
 
-  function deleteListing(itemId: string) {
+  async function deleteListing(itemId: string) {
     const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can delete this post", "error");
@@ -4035,6 +4436,15 @@ export default function App() {
       return;
     }
     const deletedAt = new Date().toISOString();
+    try {
+      await markOnlineListingDeleted({ listingId: itemId, deletedAt });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Listing could not be deleted online",
+        "error",
+      );
+      return;
+    }
     setMarketplace((current) =>
       current.map((item) =>
         item.id === itemId
@@ -4048,10 +4458,25 @@ export default function App() {
     showNotice("Listing deleted");
   }
 
-  function toggleListingSold(itemId: string) {
+  async function toggleListingSold(itemId: string) {
     const listing = activeMarketplace.find((item) => item.id === itemId);
     if (!listing || !isCurrentUserEntity(listing.sellerId, listing.seller)) {
       showNotice("Only the listing author can update sold status", "error");
+      return;
+    }
+    const nextSold = !listing.sold;
+    const soldAt = nextSold ? new Date().toISOString() : undefined;
+    try {
+      await setOnlineListingSold({
+        listingId: itemId,
+        sold: nextSold,
+        ...(soldAt ? { soldAt } : {}),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Sold status could not sync online",
+        "error",
+      );
       return;
     }
     setMarketplace((current) =>
@@ -4059,8 +4484,8 @@ export default function App() {
         item.id === itemId
           ? {
               ...item,
-              sold: !item.sold,
-              soldAt: !item.sold ? new Date().toISOString() : undefined,
+              sold: nextSold,
+              soldAt,
             }
           : item,
       ),
@@ -4142,7 +4567,7 @@ export default function App() {
     }
   }
 
-  function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ensureUserCanPost()) {
       return;
@@ -4181,6 +4606,15 @@ export default function App() {
         : undefined,
       time: new Date().toISOString(),
     };
+    try {
+      await syncChatMessageToCloud(message);
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Message could not sync online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) => [...current, message]);
     setMessageDraft("");
     setMessageImage("");
@@ -4190,23 +4624,42 @@ export default function App() {
     addNotification("Message sent", `Posted to ${activeChannel}.`, "community");
   }
 
+  function syncMessageEngagement(message: ChatMessage) {
+    setOnlineChatEngagement({
+      messageId: message.id,
+      likedBy: message.likedBy ?? [],
+      reactions: toConvexJson(message.reactions ?? {}),
+    }).catch((error) => {
+      showNotice(
+        error instanceof Error ? error.message : "Message reaction could not sync online",
+        "error",
+      );
+    });
+  }
+
   function toggleMessageHeart(messageId: string) {
+    let nextMessage: ChatMessage | null = null;
     setMessages((current) =>
       current.map((message) => {
         if (message.id !== messageId) return message;
         const likedBy = message.likedBy ?? [];
         const liked = likedBy.includes(currentUserId);
-        return {
+        nextMessage = {
           ...message,
           likedBy: liked
             ? likedBy.filter((id) => id !== currentUserId)
             : [...likedBy, currentUserId],
         };
+        return nextMessage;
       }),
     );
+    if (nextMessage) {
+      syncMessageEngagement(nextMessage);
+    }
   }
 
   function reactToMessage(messageId: string, reaction: string) {
+    let nextMessage: ChatMessage | null = null;
     setMessages((current) =>
       current.map((message) => {
         if (message.id !== messageId) return message;
@@ -4220,7 +4673,7 @@ export default function App() {
         const hadReaction = (message.reactions?.[reaction] ?? []).includes(
           currentUserId,
         );
-        return {
+        nextMessage = {
           ...message,
           likedBy: (message.likedBy ?? []).filter((id) => id !== currentUserId),
           reactions: {
@@ -4228,8 +4681,12 @@ export default function App() {
             [reaction]: hadReaction ? users : [...users, currentUserId],
           },
         };
+        return nextMessage;
       }),
     );
+    if (nextMessage) {
+      syncMessageEngagement(nextMessage);
+    }
     setMessageActionId(null);
   }
 
@@ -4243,7 +4700,7 @@ export default function App() {
     setMessageActionId(null);
   }
 
-  function saveMessageEdit(messageId: string) {
+  async function saveMessageEdit(messageId: string) {
     const message = messages.find((entry) => entry.id === messageId);
     if (!message || !isCurrentUserEntity(message.authorId, message.author)) {
       showNotice("Only the message author can save changes", "error");
@@ -4251,13 +4708,27 @@ export default function App() {
     }
     const cleanContent = sanitizeLongText(messageEditDraft, 1000);
     if (!cleanContent) return;
+    const editedAt = new Date().toISOString();
+    try {
+      await updateOnlineChatContent({
+        messageId,
+        content: cleanContent,
+        editedAt,
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Message edit could not sync online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
           ? {
               ...message,
               content: cleanContent,
-              editedAt: new Date().toISOString(),
+              editedAt,
             }
           : message,
       ),
@@ -4266,7 +4737,7 @@ export default function App() {
     setMessageEditDraft("");
   }
 
-  function deleteMessage(messageId: string) {
+  async function deleteMessage(messageId: string) {
     const message = messages.find((entry) => entry.id === messageId);
     if (!message || !isCurrentUserEntity(message.authorId, message.author)) {
       showNotice("Only the message author can delete this message", "error");
@@ -4275,11 +4746,20 @@ export default function App() {
     if (!window.confirm("Delete this message?")) {
       return;
     }
+    try {
+      await removeOnlineChatMessage({ messageId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Message could not be deleted online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) => current.filter((message) => message.id !== messageId));
     setMessageActionId(null);
   }
 
-  function handleQuestionSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleQuestionSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ensureUserCanPost()) {
       return;
@@ -4306,20 +4786,33 @@ export default function App() {
       answers: [],
     };
 
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Q&A cloud sync is not connected yet.");
+      }
+      await addOnlineQuestion({
+        question: toConvexJson({
+          ...question,
+          authorAvatar: safeRemoteMediaUrl(question.authorAvatar),
+          image: "",
+        }),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Question could not sync online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) => [question, ...current]);
-    addOnlineQuestion({
-      question: toConvexJson({
-        ...question,
-        image: "",
-      }),
-    }).catch(() => undefined);
     setQuestionDraft(initialQuestion);
     setQuestionImage("");
     showNotice("Question posted");
     addNotification("Question posted", question.title, "qa");
   }
 
-  function addAnswer(questionId: string) {
+  async function addAnswer(questionId: string) {
     const question = questions.find((entry) => entry.id === questionId);
     if (question?.resolved) {
       showNotice("This question is resolved and locked", "error");
@@ -4333,23 +4826,36 @@ export default function App() {
       return;
     }
 
+    const answer: Answer = {
+      id: uid("a"),
+      author: currentDisplayName,
+      authorId: currentUserId,
+      authorAvatar: profileData.profilePicture,
+      body,
+      helpful: 0,
+      time: new Date().toISOString(),
+    };
+    try {
+      await addOnlineAnswer({
+        questionId,
+        answer: toConvexJson({
+          ...answer,
+          authorAvatar: safeRemoteMediaUrl(answer.authorAvatar),
+        }),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Answer could not sync online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
           ? {
               ...question,
-              answers: [
-                ...question.answers,
-                {
-                  id: uid("a"),
-                  author: currentDisplayName,
-                  authorId: currentUserId,
-                  authorAvatar: profileData.profilePicture,
-                  body,
-                  helpful: 0,
-                  time: new Date().toISOString(),
-                },
-              ],
+              answers: [...question.answers, answer],
             }
           : question,
       ),
@@ -4358,26 +4864,48 @@ export default function App() {
     addNotification("Answer added", "Your Q&A answer has been posted.", "qa");
   }
 
-  function voteQuestion(questionId: string, amount: 1 | -1) {
-    setQuestions((current) =>
-      current.map((question) =>
-        question.id === questionId
-          ? { ...question, votes: question.votes + amount }
-          : question,
-      ),
-    );
-  }
-
-  function markQuestionResolved(questionId: string) {
-    const targetQuestion = questions.find((question) => question.id === questionId);
-    if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
-      showNotice("Only the question author can change resolved status", "error");
+  async function voteQuestion(questionId: string, amount: 1 | -1) {
+    const question = questions.find((entry) => entry.id === questionId);
+    if (!question) return;
+    const votes = question.votes + amount;
+    try {
+      await setOnlineQuestionVotes({ questionId, votes });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Question vote could not sync online",
+        "error",
+      );
       return;
     }
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
-          ? { ...question, resolved: !question.resolved }
+          ? { ...question, votes }
+          : question,
+      ),
+    );
+  }
+
+  async function markQuestionResolved(questionId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
+      showNotice("Only the question author can change resolved status", "error");
+      return;
+    }
+    const resolved = !targetQuestion.resolved;
+    try {
+      await setOnlineQuestionResolved({ questionId, resolved });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Resolved status could not sync online",
+        "error",
+      );
+      return;
+    }
+    setQuestions((current) =>
+      current.map((question) =>
+        question.id === questionId
+          ? { ...question, resolved }
           : question,
       ),
     );
@@ -4397,7 +4925,7 @@ export default function App() {
     setQuestionActionId(null);
   }
 
-  function saveQuestionEdit(questionId: string) {
+  async function saveQuestionEdit(questionId: string) {
     const targetQuestion = questions.find((question) => question.id === questionId);
     if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
       showNotice("Only the question author can save changes", "error");
@@ -4409,16 +4937,38 @@ export default function App() {
       showNotice("Question needs a title and details", "error");
       return;
     }
+    const editedQuestion: Question = {
+      ...targetQuestion,
+      title: cleanTitle,
+      body: cleanBody,
+      tags: compactTags(questionEditDraft.tags),
+      editedAt: new Date().toISOString(),
+    };
+    try {
+      await updateOnlineQuestion({
+        questionId,
+        question: toConvexJson({
+          ...editedQuestion,
+          authorAvatar: safeRemoteMediaUrl(editedQuestion.authorAvatar),
+          image: safeRemoteMediaUrl(editedQuestion.image),
+          answers: editedQuestion.answers.map((answer) => ({
+            ...answer,
+            authorAvatar: safeRemoteMediaUrl(answer.authorAvatar),
+            image: safeRemoteMediaUrl(answer.image),
+          })),
+        }),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Question changes could not sync online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
-          ? {
-              ...question,
-              title: cleanTitle,
-              body: cleanBody,
-              tags: compactTags(questionEditDraft.tags),
-              editedAt: new Date().toISOString(),
-            }
+          ? editedQuestion
           : question,
       ),
     );
@@ -4426,7 +4976,7 @@ export default function App() {
     setQuestionEditDraft(initialQuestion);
   }
 
-  function deleteQuestion(questionId: string) {
+  async function deleteQuestion(questionId: string) {
     const targetQuestion = questions.find((question) => question.id === questionId);
     if (!targetQuestion || !isCurrentUserEntity(targetQuestion.authorId, targetQuestion.author)) {
       showNotice("Only the question author can delete this question", "error");
@@ -4435,35 +4985,52 @@ export default function App() {
     if (!window.confirm("Delete this question and its answers?")) {
       return;
     }
+    try {
+      await removeOnlineQuestion({ questionId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Question could not be deleted online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) =>
       current.filter((question) => question.id !== questionId),
     );
     setQuestionActionId(null);
   }
 
-  function markAnswerHelpful(questionId: string, answerId: string) {
+  async function markAnswerHelpful(questionId: string, answerId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    const targetAnswer = targetQuestion?.answers.find((answer) => answer.id === answerId);
+    if (!targetQuestion || !targetAnswer) return;
+    const helpedBy = targetAnswer.helpfulBy ?? [];
+    const alreadyHelpful = helpedBy.includes(currentUserId);
+    const helpfulBy = alreadyHelpful
+      ? helpedBy.filter((id) => id !== currentUserId)
+      : [...helpedBy, currentUserId];
+    const helpful = Math.max(0, targetAnswer.helpful + (alreadyHelpful ? -1 : 1));
+    try {
+      await setOnlineAnswerHelpful({
+        questionId,
+        answerId,
+        helpful,
+        helpfulBy,
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Helpful vote could not sync online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
           ? {
               ...question,
               answers: question.answers.map((answer) =>
-                answer.id === answerId
-                  ? (() => {
-                      const helpedBy = answer.helpfulBy ?? [];
-                      const alreadyHelpful = helpedBy.includes(currentUserId);
-                      return {
-                        ...answer,
-                        helpful: Math.max(
-                          0,
-                          answer.helpful + (alreadyHelpful ? -1 : 1),
-                        ),
-                        helpfulBy: alreadyHelpful
-                          ? helpedBy.filter((id) => id !== currentUserId)
-                          : [...helpedBy, currentUserId],
-                      };
-                    })()
-                  : answer,
+                answer.id === answerId ? { ...answer, helpful, helpfulBy } : answer,
               ),
             }
           : question,
@@ -4556,30 +5123,57 @@ export default function App() {
     return true;
   }
 
-  function adminDeleteMessage(messageId: string) {
+  async function adminDeleteMessage(messageId: string) {
     if (!requireAdmin()) return;
     const message = messages.find((entry) => entry.id === messageId);
     if (!message) return;
     if (!window.confirm(`Delete message by ${message.author}?`)) return;
+    try {
+      await adminRemoveOnlineChatMessage({ messageId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Message could not be removed online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) => current.filter((entry) => entry.id !== messageId));
     showNotice("Message removed by admin");
   }
 
-  function adminDeleteQuestion(questionId: string) {
+  async function adminDeleteQuestion(questionId: string) {
     if (!requireAdmin()) return;
     const question = questions.find((entry) => entry.id === questionId);
     if (!question) return;
     if (!window.confirm(`Delete Q&A post "${question.title}"?`)) return;
+    try {
+      await adminRemoveOnlineQuestion({ questionId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Q&A post could not be removed online",
+        "error",
+      );
+      return;
+    }
     setQuestions((current) => current.filter((entry) => entry.id !== questionId));
     showNotice("Q&A post removed by admin");
   }
 
-  function adminDeleteListing(itemId: string) {
+  async function adminDeleteListing(itemId: string) {
     if (!requireAdmin()) return;
     const item = activeMarketplace.find((entry) => entry.id === itemId);
     if (!item) return;
     if (!window.confirm(`Delete marketplace listing "${item.title}"?`)) return;
     const deletedAt = new Date().toISOString();
+    try {
+      await adminMarkOnlineListingDeleted({ listingId: itemId, deletedAt });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Listing could not be removed online",
+        "error",
+      );
+      return;
+    }
     setMarketplace((current) =>
       current.map((entry) =>
         entry.id === itemId
@@ -4711,6 +5305,63 @@ export default function App() {
       if (fallback) setSelectedBusDocumentId(fallback.id);
     }
     showNotice("Bus schedule document deleted");
+  }
+
+  function clearCampusLocationDraft() {
+    setCampusLocationDraft({
+      name: "",
+      category: "Services",
+      area: "",
+      lat: "",
+      lng: "",
+      blurb: "",
+      bestFor: "",
+    });
+  }
+
+  async function saveCampusLocation() {
+    if (!requireAdmin()) return;
+    const name = sanitizePlainText(campusLocationDraft.name, 120);
+    const category = sanitizePlainText(campusLocationDraft.category, 50) || "Services";
+    const lat = Number(campusLocationDraft.lat);
+    const lng = Number(campusLocationDraft.lng);
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      showNotice("Campus pin needs a name and valid latitude/longitude", "error");
+      return;
+    }
+    const location: CampusLocation = {
+      id: `admin-${sanitizeUsername(name).replace(/_/g, "-") || uid("place")}`,
+      name,
+      category,
+      lat,
+      lng,
+      area: sanitizePlainText(campusLocationDraft.area, 120) || "UTM Johor Bahru",
+      blurb:
+        sanitizeLongText(campusLocationDraft.blurb, 320) ||
+        "Added by EverythingUTM admin.",
+      bestFor:
+        compactTags(campusLocationDraft.bestFor).length > 0
+          ? compactTags(campusLocationDraft.bestFor)
+          : [category],
+    };
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Campus map cloud sync is not connected yet.");
+      }
+      await upsertCampusPlace({
+        locationId: location.id,
+        location: toConvexJson(location),
+      });
+      setSelectedLocationId(location.id);
+      clearCampusLocationDraft();
+      showNotice("Campus map pin added");
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Campus pin could not sync online",
+        "error",
+      );
+    }
   }
 
   function adminRejectPaper(paperId: string) {
@@ -4904,7 +5555,7 @@ export default function App() {
     navigateToModule("requests");
   }
 
-  function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ensureUserCanPost()) {
       return;
@@ -4973,6 +5624,26 @@ export default function App() {
       editedAt: editingRequestId ? new Date().toISOString() : undefined,
     };
 
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Transport request cloud sync is not connected yet.");
+      }
+      await upsertOnlineRequest({
+        requestId: request.id,
+        request: toConvexJson({
+          ...request,
+          requesterAvatar: safeRemoteMediaUrl(request.requesterAvatar),
+          driverAvatar: safeRemoteMediaUrl(request.driverAvatar),
+        }),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Transport request could not sync online",
+        "error",
+      );
+      return;
+    }
     setRequests((current) =>
       editingRequestId
         ? current.map((entry) => (entry.id === editingRequestId ? request : entry))
@@ -5035,13 +5706,23 @@ export default function App() {
     setDropoffMapLocationId("");
   }
 
-  function deleteRequest(requestId: string) {
+  async function deleteRequest(requestId: string) {
     const request = requests.find((entry) => entry.id === requestId);
     if (!request || !isCurrentUserEntity(request.requesterId, request.requester)) {
       showNotice("Only the request author can delete this request", "error");
       return;
     }
     if (!window.confirm(`Delete "${request.title}" from Transportation?`)) {
+      return;
+    }
+    const deletedAt = new Date().toISOString();
+    try {
+      await markOnlineRequestDeleted({ requestId, deletedAt });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Transport request could not be deleted online",
+        "error",
+      );
       return;
     }
     setRequests((current) => current.filter((entry) => entry.id !== requestId));
@@ -5052,25 +5733,40 @@ export default function App() {
     showNotice("Transportation request deleted");
   }
 
-  function matchRequest(requestId: string) {
+  async function matchRequest(requestId: string) {
+    const targetRequest = requests.find((request) => request.id === requestId);
+    if (!targetRequest) return;
+    const matchedRequest: ServiceRequest = {
+      ...targetRequest,
+      status: "Matched",
+      driver: currentDisplayName,
+      driverId: currentUserId,
+      driverAvatar: profileData.profilePicture,
+    };
+    try {
+      await matchOnlineRequest({
+        requestId,
+        driverName: currentDisplayName,
+        driverId: currentUserId,
+        driverAvatar: safeRemoteMediaUrl(profileData.profilePicture),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Request match could not sync online",
+        "error",
+      );
+      return;
+    }
     setRequests((current) =>
       current.map((request) =>
-        request.id === requestId
-          ? {
-              ...request,
-              status: "Matched",
-              driver: currentDisplayName,
-              driverId: currentUserId,
-              driverAvatar: profileData.profilePicture,
-            }
-          : request,
+        request.id === requestId ? matchedRequest : request,
       ),
     );
     showNotice("Request matched");
     addNotification("Request matched", "A driver/delivery match was assigned.", "requests");
   }
 
-  function requestTransportPayment(request: ServiceRequest) {
+  async function requestTransportPayment(request: ServiceRequest) {
     const channel = `${t("privateChat")}: ${request.requester}`;
     const content =
       request.paymentPreference === "Cash"
@@ -5085,6 +5781,15 @@ export default function App() {
       content,
       time: new Date().toISOString(),
     };
+    try {
+      await syncChatMessageToCloud(message);
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Payment chat could not sync online",
+        "error",
+      );
+      return;
+    }
     setMessages((current) => [...current, message]);
     setActiveChannel(channel);
     navigateToModule("community");
@@ -5092,7 +5797,16 @@ export default function App() {
     addNotification("Private chat started", `Payment request sent to ${request.requester}.`, "community");
   }
 
-  function completeRequest(requestId: string) {
+  async function completeRequest(requestId: string) {
+    try {
+      await completeOnlineRequest({ requestId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Request completion could not sync online",
+        "error",
+      );
+      return;
+    }
     setRequests((current) =>
       current.map((request) =>
         request.id === requestId ? { ...request, status: "Completed" } : request,
@@ -5230,6 +5944,21 @@ export default function App() {
       return false;
     }
     const convexReadyBeforeSave = await waitForConvexAuthReady(3000);
+    let profilePictureFileId =
+      profileDraft.profilePictureFileId || profileData.profilePictureFileId || "";
+    let profilePicture = profileDraft.profilePicture || safeRemoteMediaUrl(user?.imageUrl);
+    try {
+      if (isDataUrl(profilePicture)) {
+        profilePictureFileId = await uploadDataUrl(profilePicture);
+        profilePicture = "";
+      }
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Profile picture could not be uploaded",
+        "error",
+      );
+      return false;
+    }
     const nextProfile = {
       ...profileDraft,
       name: cleanName,
@@ -5240,6 +5969,8 @@ export default function App() {
       studyYear: sanitizePlainText(profileDraft.studyYear, 40),
       age: cleanAge,
       sex: sanitizePlainText(profileDraft.sex, 40),
+      profilePicture: safeRemoteMediaUrl(profilePicture),
+      profilePictureFileId: profilePictureFileId || undefined,
       profileSaved: true,
     };
     try {
@@ -5261,14 +5992,20 @@ export default function App() {
       );
       return false;
     }
+    const localProfile =
+      !nextProfile.profilePicture &&
+      isDataUrl(profileDraft.profilePicture) &&
+      nextProfile.profilePictureFileId
+        ? { ...nextProfile, profilePicture: profileDraft.profilePicture }
+        : nextProfile;
     setMarketplace((current) =>
       current.map((item) =>
         isCurrentUserEntity(item.sellerId, item.seller)
           ? {
               ...item,
-              seller: nextProfile.name,
+              seller: localProfile.name,
               sellerId: currentUserId,
-              sellerAvatar: nextProfile.profilePicture,
+              sellerAvatar: localProfile.profilePicture,
             }
           : item,
       ),
@@ -5278,9 +6015,9 @@ export default function App() {
         isCurrentUserEntity(message.authorId, message.author)
           ? {
               ...message,
-              author: nextProfile.name,
+              author: localProfile.name,
               authorId: currentUserId,
-              authorAvatar: nextProfile.profilePicture,
+              authorAvatar: localProfile.profilePicture,
             }
           : message,
       ),
@@ -5290,7 +6027,7 @@ export default function App() {
         ...question,
         author:
           isCurrentUserEntity(question.authorId, question.author)
-            ? nextProfile.name
+            ? localProfile.name
             : question.author,
         authorId:
           isCurrentUserEntity(question.authorId, question.author)
@@ -5298,15 +6035,15 @@ export default function App() {
             : question.authorId,
         authorAvatar:
           isCurrentUserEntity(question.authorId, question.author)
-            ? nextProfile.profilePicture
+            ? localProfile.profilePicture
             : question.authorAvatar,
         answers: question.answers.map((answer) =>
           isCurrentUserEntity(answer.authorId, answer.author)
             ? {
                 ...answer,
-                author: nextProfile.name,
+                author: localProfile.name,
                 authorId: currentUserId,
-                authorAvatar: nextProfile.profilePicture,
+                authorAvatar: localProfile.profilePicture,
               }
             : answer,
         ),
@@ -5317,7 +6054,7 @@ export default function App() {
         ...request,
         requester:
           isCurrentUserEntity(request.requesterId, request.requester)
-            ? nextProfile.name
+            ? localProfile.name
             : request.requester,
         requesterId:
           isCurrentUserEntity(request.requesterId, request.requester)
@@ -5325,11 +6062,11 @@ export default function App() {
             : request.requesterId,
         requesterAvatar:
           isCurrentUserEntity(request.requesterId, request.requester)
-            ? nextProfile.profilePicture
+            ? localProfile.profilePicture
             : request.requesterAvatar,
         driver:
           isCurrentUserEntity(request.driverId, request.driver)
-            ? nextProfile.name
+            ? localProfile.name
             : request.driver,
         driverId:
           isCurrentUserEntity(request.driverId, request.driver)
@@ -5337,12 +6074,12 @@ export default function App() {
             : request.driverId,
         driverAvatar:
           isCurrentUserEntity(request.driverId, request.driver)
-            ? nextProfile.profilePicture
+            ? localProfile.profilePicture
             : request.driverAvatar,
       })),
     );
-    setProfile(nextProfile);
-    setProfileDraft(nextProfile);
+    setProfile(localProfile);
+    setProfileDraft(localProfile);
     setProfileUnlockedUserId(currentUserId);
     setSelectedProfileName(usernameDisplay(nextUsername));
     setProfileEditMode(false);
@@ -5351,7 +6088,7 @@ export default function App() {
     return true;
   }
 
-  function submitProfileReview(event: FormEvent<HTMLFormElement>) {
+  async function submitProfileReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ensureUserCanPost()) {
       return;
@@ -5370,6 +6107,25 @@ export default function App() {
       body: cleanBody,
       createdAt: new Date().toISOString(),
     };
+    try {
+      const convexReady = await waitForConvexAuthReady(3000);
+      if (!convexReady) {
+        throw new Error("Review cloud sync is not connected yet.");
+      }
+      await addOnlineProfileReview({
+        reviewId: review.id,
+        review: toConvexJson({
+          ...review,
+          reviewerAvatar: safeRemoteMediaUrl(review.reviewerAvatar),
+        }),
+      });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Review could not sync online",
+        "error",
+      );
+      return;
+    }
     setProfileReviews((current) => [review, ...current]);
     setReviewDraft({ rating: "5", body: "" });
     showNotice("Review posted");
@@ -5453,7 +6209,7 @@ export default function App() {
       setProfile(emptyProfile());
       setProfileDraft(emptyProfile());
       setSelectedProfileName("");
-      window.history.replaceState(null, "", `/${hashForModule("home")}`);
+      window.history.replaceState(null, "", pathForModule("home"));
       navigateToModule("home", { skipProfileGuard: true });
       showNotice("Account deleted online.");
     } catch (error) {
@@ -5571,7 +6327,7 @@ export default function App() {
               setRouteNotFound(false);
               setActiveModuleState("home");
               setPageDirection("back");
-              window.history.replaceState(null, "", `/${hashForModule("home")}`);
+              window.history.replaceState(null, "", pathForModule("home"));
             }}
           >
             <Home size={17} aria-hidden="true" />
@@ -5623,7 +6379,7 @@ export default function App() {
           </div>
           <NoticeBanner message={notice} tone={noticeTone} />
           <div className="auth-action-stack">
-            <SignInButton mode="modal" forceRedirectUrl="/#profile">
+            <SignInButton mode="modal" forceRedirectUrl="/profile">
               <button
                 className="primary-button full-width"
                 data-preview-url={moduleDestinationUrl("profile")}
@@ -5633,7 +6389,7 @@ export default function App() {
                 Sign in
               </button>
             </SignInButton>
-            <SignUpButton mode="modal" forceRedirectUrl="/#profile">
+            <SignUpButton mode="modal" forceRedirectUrl="/profile">
               <button
                 className="secondary-button full-width"
                 data-preview-url={moduleDestinationUrl("profile")}
@@ -5882,7 +6638,7 @@ export default function App() {
                 <MapPinned size={20} aria-hidden="true" />
                 <span>{t("campusPlaces")}</span>
                 <strong>{campusLocations.length}</strong>
-                <small>{campusCategories.length - 1} categories</small>
+                <small>{campusFilterCategories.length - 1} categories</small>
               </button>
               <button
                 className="metric-card metric-button"
@@ -6493,8 +7249,15 @@ export default function App() {
                   }}
                 >
                   <div className="seller-avatar">
-                    {selectedListing.sellerAvatar ? (
-                      <img src={selectedListing.sellerAvatar} alt="" />
+                    {selectedListing.sellerAvatar ||
+                    getProfile(selectedListing.seller).profilePicture ? (
+                      <img
+                        src={
+                          selectedListing.sellerAvatar ||
+                          getProfile(selectedListing.seller).profilePicture
+                        }
+                        alt=""
+                      />
                     ) : (
                       <span>{selectedListing.seller.slice(0, 1).toUpperCase()}</span>
                     )}
@@ -6993,7 +7756,7 @@ export default function App() {
                 <h1>Famous UTM locations</h1>
               </div>
               <div className="filter-row">
-                {campusCategories.map((category) => (
+                {campusFilterCategories.map((category) => (
                   <button
                     className={`chip ${mapCategory === category ? "is-active" : ""}`}
                     key={category}
@@ -7244,6 +8007,17 @@ export default function App() {
                         ) : null}
                         {message.voiceUrl && (
                           <div className="voice-message">
+                            <span className="voice-play-dot">
+                              <Mic size={14} aria-hidden="true" />
+                            </span>
+                            <div className="voice-bars" aria-hidden="true">
+                              {Array.from({ length: 18 }).map((_, index) => (
+                                <span
+                                  key={index}
+                                  style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
+                                />
+                              ))}
+                            </div>
                             <audio controls src={message.voiceUrl}>
                               Voice message
                             </audio>
@@ -7374,19 +8148,38 @@ export default function App() {
                 }
                 onCancelReply={() => setReplyingToMessage(null)}
                 voicePreview={
-                  messageVoice ? (
+                  isRecordingVoice ? (
                     <>
-                      <audio controls src={messageVoice}>
-                        Voice preview
-                      </audio>
-                      <div className="voice-bars" aria-hidden="true">
-                        {Array.from({ length: 16 }).map((_, index) => (
+                      <span className="voice-recording-dot" />
+                      <div>
+                        <strong>Recording voice</strong>
+                        <span>{recordingDuration}s</span>
+                      </div>
+                      <div className="voice-bars is-live" aria-hidden="true">
+                        {Array.from({ length: 18 }).map((_, index) => (
                           <span
                             key={index}
-                            style={{ "--bar": `${(index % 5) + 3}` } as CSSProperties}
+                            style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
                           />
                         ))}
                       </div>
+                    </>
+                  ) : messageVoice ? (
+                    <>
+                      <span className="voice-play-dot">
+                        <Mic size={14} aria-hidden="true" />
+                      </span>
+                      <div className="voice-bars" aria-hidden="true">
+                        {Array.from({ length: 18 }).map((_, index) => (
+                          <span
+                            key={index}
+                            style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
+                          />
+                        ))}
+                      </div>
+                      <audio controls src={messageVoice}>
+                        Voice preview
+                      </audio>
                       <span className="voice-ready-chip">
                         <Mic size={14} aria-hidden="true" />
                         {messageVoiceDuration}s
@@ -7394,7 +8187,7 @@ export default function App() {
                     </>
                   ) : undefined
                 }
-                onClearVoice={clearVoiceMessage}
+                onClearVoice={isRecordingVoice ? undefined : clearVoiceMessage}
                 isRecordingVoice={isRecordingVoice}
                 onToggleVoice={toggleVoiceRecording}
               />
@@ -9052,6 +9845,106 @@ export default function App() {
 
                 <section className="panel admin-panel">
                   <div className="panel-heading">
+                    <h2>Campus map pins</h2>
+                    <MapPinned size={18} aria-hidden="true" />
+                  </div>
+                  <div className="stacked-form">
+                    <div className="two-col">
+                      <input
+                        value={campusLocationDraft.name}
+                        onChange={(event) =>
+                          setCampusLocationDraft((draft) => ({
+                            ...draft,
+                            name: event.target.value,
+                          }))
+                        }
+                        placeholder="Location name"
+                      />
+                      <select
+                        value={campusLocationDraft.category}
+                        onChange={(event) =>
+                          setCampusLocationDraft((draft) => ({
+                            ...draft,
+                            category: event.target.value,
+                          }))
+                        }
+                      >
+                        {campusFilterCategories
+                          .filter((category) => category !== "All")
+                          .map((category) => (
+                            <option key={category}>{category}</option>
+                          ))}
+                      </select>
+                    </div>
+                    <input
+                      value={campusLocationDraft.area}
+                      onChange={(event) =>
+                        setCampusLocationDraft((draft) => ({
+                          ...draft,
+                          area: event.target.value,
+                        }))
+                      }
+                      placeholder="Area, building code, or nearby landmark"
+                    />
+                    <div className="two-col">
+                      <input
+                        inputMode="decimal"
+                        value={campusLocationDraft.lat}
+                        onChange={(event) =>
+                          setCampusLocationDraft((draft) => ({
+                            ...draft,
+                            lat: event.target.value,
+                          }))
+                        }
+                        placeholder="Latitude"
+                      />
+                      <input
+                        inputMode="decimal"
+                        value={campusLocationDraft.lng}
+                        onChange={(event) =>
+                          setCampusLocationDraft((draft) => ({
+                            ...draft,
+                            lng: event.target.value,
+                          }))
+                        }
+                        placeholder="Longitude"
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={campusLocationDraft.blurb}
+                      onChange={(event) =>
+                        setCampusLocationDraft((draft) => ({
+                          ...draft,
+                          blurb: event.target.value,
+                        }))
+                      }
+                      placeholder="Short map description"
+                    />
+                    <input
+                      value={campusLocationDraft.bestFor}
+                      onChange={(event) =>
+                        setCampusLocationDraft((draft) => ({
+                          ...draft,
+                          bestFor: event.target.value,
+                        }))
+                      }
+                      placeholder="Best for tags, comma separated"
+                    />
+                    <div className="card-actions">
+                      <button className="primary-button" type="button" onClick={saveCampusLocation}>
+                        <MapPin size={16} aria-hidden="true" />
+                        Add map pin
+                      </button>
+                      <button className="ghost-button" type="button" onClick={clearCampusLocationDraft}>
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="panel admin-panel">
+                  <div className="panel-heading">
                     <h2>Past paper approvals</h2>
                     <FolderArchive size={18} aria-hidden="true" />
                   </div>
@@ -9235,15 +10128,28 @@ export default function App() {
                           <strong>Appearance</strong>
                           <span>Switch the app theme before finishing setup.</span>
                         </div>
-                        <CurtainThemeToggle
-                          theme={appSettings.theme}
-                          onChange={(theme) =>
-                            setSettings((current) => ({ ...current, theme }))
-                          }
-                          lightLabel={t("lightMode")}
-                          darkLabel={t("darkMode")}
-                          compact
-                        />
+                        <div className="segmented-control setup-theme-buttons" role="group" aria-label="Appearance">
+                          <button
+                            className={appSettings.theme === "light" ? "is-active" : ""}
+                            type="button"
+                            onClick={() =>
+                              setSettings((current) => ({ ...current, theme: "light" }))
+                            }
+                          >
+                            <Sun size={15} aria-hidden="true" />
+                            {t("lightMode")}
+                          </button>
+                          <button
+                            className={appSettings.theme === "dark" ? "is-active" : ""}
+                            type="button"
+                            onClick={() =>
+                              setSettings((current) => ({ ...current, theme: "dark" }))
+                            }
+                          >
+                            <Moon size={15} aria-hidden="true" />
+                            {t("darkMode")}
+                          </button>
+                        </div>
                       </div>
                       <Stepper
                         initialStep={1}
@@ -9746,14 +10652,28 @@ export default function App() {
                   <h2>{t("appearance")}</h2>
                   <Settings size={18} aria-hidden="true" />
                 </div>
-                <CurtainThemeToggle
-                  theme={appSettings.theme}
-                  onChange={(theme) =>
-                    setSettings((current) => ({ ...current, theme }))
-                  }
-                  lightLabel={t("lightMode")}
-                  darkLabel={t("darkMode")}
-                />
+                <div className="segmented-control" role="group" aria-label="Appearance">
+                  <button
+                    className={appSettings.theme === "light" ? "is-active" : ""}
+                    type="button"
+                    onClick={() =>
+                      setSettings((current) => ({ ...current, theme: "light" }))
+                    }
+                  >
+                    <Sun size={15} aria-hidden="true" />
+                    {t("lightMode")}
+                  </button>
+                  <button
+                    className={appSettings.theme === "dark" ? "is-active" : ""}
+                    type="button"
+                    onClick={() =>
+                      setSettings((current) => ({ ...current, theme: "dark" }))
+                    }
+                  >
+                    <Moon size={15} aria-hidden="true" />
+                    {t("darkMode")}
+                  </button>
+                </div>
               </section>
 
               <section className="panel">

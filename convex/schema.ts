@@ -45,4 +45,57 @@ export default defineSchema({
     createdAt: v.number(),
     createdBy: v.string(),
   }).index("by_questionId", ["questionId"]),
+
+  profileReviews: defineTable({
+    reviewId: v.string(),
+    review: v.any(),
+    profileName: v.string(),
+    reviewerId: v.string(),
+    createdAt: v.number(),
+  }).index("by_reviewId", ["reviewId"]),
+
+  campusLocations: defineTable({
+    locationId: v.string(),
+    location: v.object({
+      id: v.string(),
+      name: v.string(),
+      category: v.string(),
+      lat: v.number(),
+      lng: v.number(),
+      area: v.string(),
+      blurb: v.string(),
+      bestFor: v.array(v.string()),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    createdBy: v.string(),
+  }).index("by_locationId", ["locationId"]),
+
+  marketplaceListings: defineTable({
+    listingId: v.string(),
+    listing: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    createdBy: v.string(),
+    deletedAt: v.optional(v.string()),
+  }).index("by_listingId", ["listingId"]),
+
+  chatMessages: defineTable({
+    messageId: v.string(),
+    channel: v.string(),
+    message: v.any(),
+    createdAt: v.number(),
+    createdBy: v.string(),
+  })
+    .index("by_messageId", ["messageId"])
+    .index("by_channel_and_createdAt", ["channel", "createdAt"]),
+
+  serviceRequests: defineTable({
+    requestId: v.string(),
+    request: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    createdBy: v.string(),
+    deletedAt: v.optional(v.string()),
+  }).index("by_requestId", ["requestId"]),
 });

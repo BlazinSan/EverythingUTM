@@ -107,6 +107,29 @@
   }
 }
 
+@keyframes screenShake {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  18% {
+    transform: translate3d(-7px, 0, 0);
+  }
+  36% {
+    transform: translate3d(7px, 0, 0);
+  }
+  54% {
+    transform: translate3d(-5px, 0, 0);
+  }
+  72% {
+    transform: translate3d(5px, 0, 0);
+  }
+}
+
+html.screen-shake body {
+  animation: screenShake 0.42s ease;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -204,6 +227,22 @@ textarea {
 button,
 a {
   -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+[role="button"],
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+[role="button"]:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
 }
 
 button {
@@ -437,6 +476,10 @@ img {
 .topbar-actions {
   position: relative;
   justify-content: flex-end;
+}
+
+.module-heading .heading-actions {
+  flex-wrap: nowrap;
 }
 
 .search-results-panel,
@@ -1586,42 +1629,85 @@ textarea:focus {
 }
 
 .voice-ready-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
+  color: var(--utm-red);
+  font-weight: 900;
 }
 
 .voice-message {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: min(360px, 100%);
   margin-top: 8px;
-  padding: 9px;
+  padding: 8px 10px;
   color: var(--text);
-  background: var(--surface-strong);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(0, 133, 111, 0.12), rgba(157, 34, 53, 0.08));
+  border: 1px solid rgba(0, 133, 111, 0.22);
+  border-radius: 999px;
 }
 
 .voice-message audio {
-  width: 100%;
+  width: 112px;
   min-width: 0;
+  height: 32px;
 }
 
 .voice-preview {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px;
-  background: var(--surface-strong);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(0, 133, 111, 0.13), rgba(157, 34, 53, 0.08));
+  border: 1px solid rgba(0, 133, 111, 0.22);
+  border-radius: 999px;
 }
 
 .voice-preview audio {
-  width: 100%;
+  width: 130px;
   min-width: 0;
+  height: 32px;
+}
+
+.voice-preview > div:not(.voice-bars) {
+  display: grid;
+  min-width: 96px;
+  line-height: 1.15;
+}
+
+.voice-preview > div:not(.voice-bars) strong {
+  font-size: 13px;
+}
+
+.voice-preview > div:not(.voice-bars) span {
+  color: var(--utm-red);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.voice-play-dot,
+.voice-recording-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  color: #fff;
+  background: var(--utm-red);
+  border-radius: 999px;
+}
+
+.voice-recording-dot {
+  width: 14px;
+  height: 14px;
+  background: #ff4058;
+  box-shadow: 0 0 0 0 rgba(255, 64, 88, 0.5);
+  animation: recordingPulse 1.1s ease-in-out infinite;
 }
 
 .voice-bars {
@@ -1630,6 +1716,7 @@ textarea:focus {
   gap: 3px;
   height: 28px;
   min-width: 74px;
+  flex: 1;
 }
 
 .voice-bars span {
@@ -1640,6 +1727,19 @@ textarea:focus {
   animation: voicePulse 1s ease-in-out infinite;
   animation-delay: calc(var(--bar) * -0.06s);
   transform-origin: center;
+}
+
+.voice-bars.is-live span {
+  background: var(--utm-teal);
+}
+
+@keyframes recordingPulse {
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 64, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 64, 88, 0);
+  }
 }
 
 .attachment-button {
@@ -4194,6 +4294,13 @@ textarea:focus {
 }
 
 @media (max-width: 720px) {
+  button:focus,
+  a:focus,
+  [role="button"]:focus {
+    outline: none;
+    box-shadow: none;
+  }
+
   .app-shell {
     display: block;
     padding-bottom: 92px;
@@ -4449,6 +4556,21 @@ textarea:focus {
   .heading-actions,
   .filter-row {
     width: 100%;
+  }
+
+  .module-heading .heading-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .module-heading .heading-actions .primary-button,
+  .module-heading .heading-actions .secondary-button {
+    width: 100%;
+    justify-content: center;
+    padding-inline: 8px;
+    font-size: 12px;
   }
 
   .primary-button,
