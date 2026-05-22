@@ -3371,16 +3371,33 @@ export default function App() {
   );
 
   const channelMessages = useMemo(
-    () =>
-      messages
-        .filter((message) => message.channel === activeChannel)
-        .filter(
-          (message) =>
-            !search ||
-            [message.author, message.content].join(" ").toLowerCase().includes(search),
-        ),
-    [activeChannel, messages, search],
-  );
+  () =>
+    messages
+      .filter((message) => message.channel === activeChannel)
+      .filter(
+        (message) =>
+          !search ||
+          [message.author, message.content]
+            .join(" ")
+            .toLowerCase()
+            .includes(search),
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.time ?? "1970-01-01").getTime() -
+          new Date(b.time ?? "1970-01-01").getTime(),
+      ),
+  [activeChannel, messages, search],
+);
+  useEffect(() => {
+  const thread = chatThreadRef.current;
+    if (!thread) return;
+
+    thread.scrollTo({
+      top: thread.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [channelMessages.length, activeChannel]);
   const typingUsers = useMemo(() => {
     const now = Date.now();
     const seen = new Set<string>();
@@ -4812,44 +4829,40 @@ export default function App() {
     addNotification("Question posted", question.title, "qa");
   }
 
-  async function addAnswer(questionId: string) {
+  function addAnswer(questionId: string) {
     const question = questions.find((entry) => entry.id === questionId);
-    if (question?.resolved) {
+
+    if (!question) {
+      showNotice("Question was not found", "error");
+      return;
+    }
+
+    if (question.resolved) {
       showNotice("This question is resolved and locked", "error");
       return;
     }
+
     if (!ensureUserCanPost()) {
       return;
     }
+
     const body = sanitizeLongText(answerDrafts[questionId] ?? "", 1400);
+
     if (!body) {
       return;
     }
 
-    const answer: Answer = {
+    const answer = {
       id: uid("a"),
       author: currentDisplayName,
       authorId: currentUserId,
       authorAvatar: profileData.profilePicture,
       body,
       helpful: 0,
+      helpfulBy: [],
       time: new Date().toISOString(),
     };
-    try {
-      await addOnlineAnswer({
-        questionId,
-        answer: toConvexJson({
-          ...answer,
-          authorAvatar: safeRemoteMediaUrl(answer.authorAvatar),
-        }),
-      });
-    } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Answer could not sync online",
-        "error",
-      );
-      return;
-    }
+
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
@@ -4860,8 +4873,20 @@ export default function App() {
           : question,
       ),
     );
+
     setAnswerDrafts((current) => ({ ...current, [questionId]: "" }));
     addNotification("Answer added", "Your Q&A answer has been posted.", "qa");
+
+    addOnlineAnswer({
+      questionId,
+      answer: toConvexJson(answer),
+    }).catch((error) => {
+      console.error(error);
+      showNotice(
+        error instanceof Error ? error.message : "Answer could not sync online",
+        "error",
+      );
+    });
   }
 
   async function voteQuestion(questionId: string, amount: 1 | -1) {
@@ -7885,7 +7910,7 @@ export default function App() {
             </div>
 
             <section className="chat-panel">
-              <div className="chat-thread">
+              <div className="chat-thread" ref={chatThreadRef}>
                 {channelMessages.length === 0 ? (
                   <EmptyState
                     icon={MessagesSquare}
