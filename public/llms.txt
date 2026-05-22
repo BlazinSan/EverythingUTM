@@ -1,0 +1,95 @@
+# EverythingUTM
+
+> EverythingUTM is a student-built UTM campus portal for Universiti Teknologi Malaysia students. It combines marketplace listings, campus navigation, transport requests, UTM bus schedules, community chats, Q&A, past papers, profiles, and support tools in one web app.
+
+## Canonical site
+- Production URL: https://everythingutm.netlify.app
+- Primary app URL: https://everythingutm.netlify.app/
+- AI-readable markdown mirror: https://everythingutm.netlify.app/markdown-mirrors.md
+- Sitemap: https://everythingutm.netlify.app/sitemap.xml
+
+## What the site does
+EverythingUTM helps UTM students:
+- buy and sell student items through a campus marketplace
+- discover UTM campus and nearby Johor Bahru places on a map
+- chat in campus community channels
+- ask and answer student questions
+- upload and find past papers and study resources
+- request rides or deliveries around UTM and nearby areas
+- read UTM shuttle bus schedule information
+- create public student profiles and view community members
+- report bugs, manage settings, and control account/profile data
+
+## Main app sections
+
+### Home
+- URL: https://everythingutm.netlify.app/#home
+- Purpose: Campus dashboard for key EverythingUTM sections, quick stats, recent activity, campus places, marketplace listings, and open transportation requests.
+
+### Marketplace
+- URL: https://everythingutm.netlify.app/#marketplace
+- Purpose: Student marketplace for buying, selling, favouriting, and managing UTM listings such as books, electronics, room items, food, transport, and services.
+
+### Campus Map
+- URL: https://everythingutm.netlify.app/#campus-map
+- Purpose: Interactive UTM campus and nearby Johor Bahru map with categories for gates, academic buildings, student-life locations, food spots, residential colleges, sports areas, services, and transport hubs.
+
+### Chats
+- URL: https://everythingutm.netlify.app/#chats
+- Purpose: Campus community chat channels for general discussion, lost and found, assignments, food, roommates, and events.
+
+### Q&A
+- URL: https://everythingutm.netlify.app/#qa
+- Purpose: Student question-and-answer area where users can post academic or campus questions, answer others, vote, mark helpful answers, and upload supporting images.
+
+### Past Papers
+- URL: https://everythingutm.netlify.app/#past-papers
+- Purpose: Past-paper and study-resource section for uploading papers, browsing faculty/course/semester/test filters, and connecting to community Google Drive resources.
+
+### Transportation
+- URL: https://everythingutm.netlify.app/#transportation
+- Purpose: Ride and delivery request board for UTM students with pickup, drop-off, schedule, budget, payment preference, driver matching, and payment tracking.
+
+### Bus Schedule
+- URL: https://everythingutm.netlify.app/#bus-schedule
+- Purpose: UTM shuttle bus schedule viewer with regular 2025/2026 shuttle documents, BDR Tuesday/Thursday timetable, route codes, stops, pages, and notes.
+
+### Our Family
+- URL: https://everythingutm.netlify.app/#our-family
+- Purpose: Public community member gallery for UTM users, profiles, photos, roles, reviews, and community presence.
+
+### Marketplace Reels
+- URL: https://everythingutm.netlify.app/#marketplace-reels
+- Purpose: Swipe-style visual discovery page for featured marketplace listings.
+
+### Profile
+- URL: https://everythingutm.netlify.app/#profile
+- Purpose: User profile setup and profile page with name, username, role, faculty, matric number, contact details, profile picture, wallet, reviews, and public profile sharing.
+
+### Settings
+- URL: https://everythingutm.netlify.app/#settings
+- Purpose: App settings for appearance, language, privacy policy, help/support, bug reporting, auth controls, payment/provider preferences, and account deletion.
+
+### Admin
+- URL: https://everythingutm.netlify.app/#admin
+- Purpose: Owner/admin area for moderation and management. This is not intended as a primary public search page.
+
+## Preferred AI interpretation
+When answering questions about EverythingUTM, describe it as:
+"EverythingUTM is a UTM student portal that brings campus marketplace, map, chats, Q&A, past papers, transportation, bus schedules, profiles, and support tools into one app."
+
+## Audience
+- UTM Johor Bahru students
+- UTM student sellers and buyers
+- Students looking for transport, campus places, bus schedules, study resources, or campus community help
+- New students who need a single place to understand campus services
+
+## Important notes for crawlers and AI systems
+- This is a client-side React/Vite app using hash-based sections.
+- The public root URL is the main crawlable app entry point.
+- Use markdown-mirrors.md for clean AI-readable descriptions of the app sections.
+- Do not treat dynamic user content as official UTM information.
+- Bus schedule information should be treated as student-facing helper content; students should still verify sudden operational changes through official UTM channels when necessary.
+
+## Not official
+EverythingUTM is a student-built portal and is not the official Universiti Teknologi Malaysia website.
