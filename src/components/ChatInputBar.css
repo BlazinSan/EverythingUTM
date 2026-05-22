@@ -40,6 +40,12 @@
   border-radius: 50%;
 }
 
+.chat-send-loading {
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .chat-attachment-tray {
   display: flex;
   gap: 8px;

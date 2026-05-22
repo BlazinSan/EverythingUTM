@@ -75,6 +75,9 @@ export const upsert = mutation({
     };
 
     if (existing) {
+      if (JSON.stringify(existing.data) === JSON.stringify(args.data)) {
+        return existing._id;
+      }
       await ctx.db.patch(existing._id, patch);
       return existing._id;
     }

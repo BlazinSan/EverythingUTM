@@ -415,11 +415,25 @@ img {
   padding: 22px 28px 36px;
 }
 
+.app-footer {
+  margin-top: 28px;
+  padding: 18px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
 .main-content.is-chat-page {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
+}
+
+.main-content.is-chat-page .app-footer {
+  display: none;
 }
 
 .main-content.is-chat-page .topbar {
@@ -1988,6 +2002,11 @@ textarea:focus {
   border-radius: 8px;
 }
 
+.message-actions .danger-action {
+  color: var(--utm-red);
+  border-color: rgba(216, 74, 95, 0.34);
+}
+
 .reaction-palette {
   display: inline-flex;
   align-items: center;
@@ -2639,6 +2658,12 @@ textarea:focus {
   color: #fff;
   background: var(--teal);
   border-color: var(--teal);
+}
+
+.answer-delete-button {
+  margin-left: 8px;
+  color: var(--utm-red);
+  border-color: rgba(216, 74, 95, 0.34);
 }
 
 .locked-answer-note {
@@ -4674,6 +4699,12 @@ textarea:focus {
     padding: 8px;
   }
 
+  .product-body .card-title-row {
+    justify-content: flex-start;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
   .product-body h2 {
     display: -webkit-box;
     font-size: 12px;
@@ -4694,8 +4725,11 @@ textarea:focus {
 
   .product-body .pill,
   .product-body .card-title-row strong {
+    max-width: 100%;
     padding: 3px 5px;
     font-size: 10px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .seller-inline {

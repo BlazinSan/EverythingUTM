@@ -46,6 +46,16 @@ export default defineSchema({
     createdBy: v.string(),
   }).index("by_questionId", ["questionId"]),
 
+  questionAnswers: defineTable({
+    answerId: v.string(),
+    questionId: v.string(),
+    answer: v.any(),
+    createdAt: v.number(),
+    createdBy: v.string(),
+  })
+    .index("by_questionId_and_createdAt", ["questionId", "createdAt"])
+    .index("by_answerId", ["answerId"]),
+
   profileReviews: defineTable({
     reviewId: v.string(),
     review: v.any(),

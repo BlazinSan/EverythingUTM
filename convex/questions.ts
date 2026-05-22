@@ -10,6 +10,17 @@ async function requireUser(ctx: QueryCtx | MutationCtx) {
   return identity.tokenIdentifier;
 }
 
+async function requireUserAuth(ctx: QueryCtx | MutationCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("You must be signed in.");
+  }
+  return {
+    userId: identity.tokenIdentifier,
+    keys: [identity.tokenIdentifier, identity.subject].filter(Boolean),
+  };
+}
+
 async function requireOwner(ctx: MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
   const ownerEmail = process.env.OWNER_EMAIL || "hammau05@gmail.com";
@@ -73,9 +84,7 @@ function cleanQuestion(value: unknown, userId: string) {
     resolved: Boolean(question.resolved),
     createdAt: safeText(question.createdAt, 80) || new Date().toISOString(),
     editedAt: safeText(question.editedAt, 80) || undefined,
-    answers: Array.isArray(question.answers)
-      ? question.answers.map((answer) => cleanAnswer(answer, userId)).slice(0, 80)
-      : [],
+    answers: [],
   };
   if (!clean.id || !clean.title || !clean.body || !clean.author) {
     throw new Error("Question needs a title, details, and author.");
@@ -87,6 +96,40 @@ function cleanQuestion(value: unknown, userId: string) {
   return JSON.parse(serialized) as Record<string, unknown>;
 }
 
+function mergeAnswers(legacyAnswers: unknown[], onlineAnswers: unknown[]) {
+  const answersById = new Map<string, unknown>();
+
+  for (const answer of legacyAnswers) {
+    const entry = asRecord(answer);
+    const id = safeText(entry.id, 80);
+    if (id) {
+      answersById.set(id, answer);
+    }
+  }
+
+  for (const answer of onlineAnswers) {
+    const entry = asRecord(answer);
+    const id = safeText(entry.id, 80);
+    if (id) {
+      answersById.set(id, answer);
+    }
+  }
+
+  return Array.from(answersById.values()).slice(-80);
+}
+
+async function deleteQuestionAnswers(ctx: MutationCtx, questionId: string) {
+  const answers = await ctx.db
+    .query("questionAnswers")
+    .withIndex("by_questionId_and_createdAt", (q) =>
+      q.eq("questionId", questionId),
+    )
+    .take(100);
+  for (const answer of answers) {
+    await ctx.db.delete(answer._id);
+  }
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -95,7 +138,28 @@ export const list = query({
       return [];
     }
     const rows = await ctx.db.query("questions").order("desc").take(80);
-    return rows.map((row) => row.question);
+    return await Promise.all(
+      rows.map(async (row) => {
+        const question = asRecord(row.question);
+        const legacyAnswers = Array.isArray(question.answers)
+          ? question.answers
+          : [];
+        const answerRows = await ctx.db
+          .query("questionAnswers")
+          .withIndex("by_questionId_and_createdAt", (q) =>
+            q.eq("questionId", row.questionId),
+          )
+          .order("asc")
+          .take(80);
+        return {
+          ...question,
+          answers: mergeAnswers(
+            legacyAnswers,
+            answerRows.map((answerRow) => answerRow.answer),
+          ),
+        };
+      }),
+    );
   },
 });
 
@@ -160,7 +224,7 @@ export const addAnswer = mutation({
     answer: v.any(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
+    const { userId, keys } = await requireUserAuth(ctx);
     const existing = await ctx.db
       .query("questions")
       .withIndex("by_questionId", (q) => q.eq("questionId", args.questionId))
@@ -172,16 +236,28 @@ export const addAnswer = mutation({
     if (question.resolved) {
       throw new Error("This question is resolved and locked.");
     }
-    const answers = Array.isArray(question.answers) ? question.answers : [];
     const answer = cleanAnswer(args.answer, userId);
-    if (answers.some((entry) => asRecord(entry).id === answer.id)) {
+    const questionAuthorId = safeText(question.authorId, 160);
+    if (
+      keys.includes(existing.createdBy) ||
+      keys.includes(questionAuthorId) ||
+      (answer.authorId && questionAuthorId && answer.authorId === questionAuthorId)
+    ) {
+      throw new Error("You cannot answer your own question.");
+    }
+    const existingAnswer = await ctx.db
+      .query("questionAnswers")
+      .withIndex("by_answerId", (q) => q.eq("answerId", answer.id))
+      .unique();
+    if (existingAnswer) {
       return existing._id;
     }
-    await ctx.db.patch(existing._id, {
-      question: {
-        ...question,
-        answers: [...answers, answer].slice(-80),
-      },
+    await ctx.db.insert("questionAnswers", {
+      answerId: answer.id,
+      questionId: args.questionId,
+      answer,
+      createdAt: Date.now(),
+      createdBy: userId,
     });
     return existing._id;
   },
@@ -220,6 +296,24 @@ export const setAnswerHelpful = mutation({
   },
   handler: async (ctx, args) => {
     await requireUser(ctx);
+    const answerRow = await ctx.db
+      .query("questionAnswers")
+      .withIndex("by_answerId", (q) => q.eq("answerId", args.answerId))
+      .unique();
+    if (answerRow) {
+      await ctx.db.patch(answerRow._id, {
+        answer: {
+          ...asRecord(answerRow.answer),
+          helpful: Math.max(0, Math.min(9999, args.helpful)),
+          helpfulBy: args.helpfulBy
+            .map((id) => id.slice(0, 160))
+            .filter(Boolean)
+            .slice(0, 120),
+        },
+      });
+      return answerRow._id;
+    }
+
     const existing = await ctx.db
       .query("questions")
       .withIndex("by_questionId", (q) => q.eq("questionId", args.questionId))
@@ -244,6 +338,53 @@ export const setAnswerHelpful = mutation({
               .slice(0, 120),
           };
         }),
+      },
+    });
+    return existing._id;
+  },
+});
+
+export const removeAnswer = mutation({
+  args: {
+    questionId: v.string(),
+    answerId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { userId, keys } = await requireUserAuth(ctx);
+    const answerRow = await ctx.db
+      .query("questionAnswers")
+      .withIndex("by_answerId", (q) => q.eq("answerId", args.answerId))
+      .unique();
+    if (answerRow) {
+      if (answerRow.createdBy !== userId) {
+        throw new Error("Only the answer author can delete this answer.");
+      }
+      await ctx.db.delete(answerRow._id);
+      return answerRow._id;
+    }
+
+    const existing = await ctx.db
+      .query("questions")
+      .withIndex("by_questionId", (q) => q.eq("questionId", args.questionId))
+      .unique();
+    if (!existing) {
+      return null;
+    }
+    const question = asRecord(existing.question);
+    const answers = Array.isArray(question.answers) ? question.answers : [];
+    const target = answers.find((answer) => asRecord(answer).id === args.answerId);
+    if (!target) {
+      return null;
+    }
+    if (!keys.includes(safeText(asRecord(target).authorId, 160))) {
+      throw new Error("Only the answer author can delete this answer.");
+    }
+    await ctx.db.patch(existing._id, {
+      question: {
+        ...question,
+        answers: answers.filter(
+          (answer) => asRecord(answer).id !== args.answerId,
+        ),
       },
     });
     return existing._id;
@@ -293,6 +434,7 @@ export const remove = mutation({
     if (existing.createdBy !== userId) {
       throw new Error("Only the question author can delete this question.");
     }
+    await deleteQuestionAnswers(ctx, args.questionId);
     await ctx.db.delete(existing._id);
     return existing._id;
   },
@@ -311,6 +453,7 @@ export const adminRemove = mutation({
     if (!existing) {
       return null;
     }
+    await deleteQuestionAnswers(ctx, args.questionId);
     await ctx.db.delete(existing._id);
     return existing._id;
   },

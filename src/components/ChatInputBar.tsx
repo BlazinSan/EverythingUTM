@@ -17,6 +17,7 @@ export default function ChatInputBar({
   voicePreview,
   onClearVoice,
   isRecordingVoice,
+  isSending,
   onToggleVoice,
   children,
 }: {
@@ -32,6 +33,7 @@ export default function ChatInputBar({
   voicePreview?: ReactNode;
   onClearVoice?: () => void;
   isRecordingVoice: boolean;
+  isSending?: boolean;
   onToggleVoice: () => void;
   children?: ReactNode;
 }) {
@@ -130,8 +132,17 @@ export default function ChatInputBar({
             <Mic size={17} aria-hidden="true" />
           )}
         </button>
-        <button className="primary-button chat-send-button" type="submit">
-          <Send size={17} aria-hidden="true" />
+        <button
+          className="primary-button chat-send-button"
+          type="submit"
+          disabled={isSending}
+          title={isSending ? "Sending voice message..." : "Send message"}
+        >
+          {isSending ? (
+            <span className="chat-send-loading">Sending...</span>
+          ) : (
+            <Send size={17} aria-hidden="true" />
+          )}
         </button>
       </div>
     </form>

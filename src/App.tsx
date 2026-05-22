@@ -836,59 +836,119 @@ function moduleFromPath(path = window.location.pathname) {
 }
 
 function ModernVoicePlayer({
-    src,
-    duration,
-  }: {
-    src: string;
-    duration?: number;
-  }) {
-    const audioRef = useRef<HTMLAudioElement | null>(null);
-    const [isPlaying, setIsPlaying] = useState(false);
+  src,
+  duration,
+}: {
+  src?: string;
+  duration?: number;
+}) {
+  const safeSrc = typeof src === "string" ? src.trim() : "";
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
-    function togglePlayback() {
-      const audio = audioRef.current;
-      if (!audio) return;
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !safeSrc) return;
 
-      if (audio.paused) {
-        audio.play().catch(() => setIsPlaying(false));
-      } else {
-        audio.pause();
-      }
+    audio.pause();
+    audio.currentTime = 0;
+    audio.load();
+
+    setIsPlaying(false);
+    setHasError(false);
+  }, [safeSrc]);
+
+  if (!safeSrc) {
+    return null;
+  }
+
+  async function togglePlayback() {
+    const audio = audioRef.current;
+
+    if (!audio) {
+      setHasError(true);
+      return;
     }
 
-    return (
-      <div className={`modern-voice-player ${isPlaying ? "is-playing" : ""}`}>
-        <audio
-          ref={audioRef}
-          src={src}
-          preload="metadata"
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-        />
+    try {
+      setHasError(false);
 
-        <button
-          className="voice-play-button"
-          type="button"
-          onClick={togglePlayback}
-          aria-label={isPlaying ? "Pause voice message" : "Play voice message"}
-        >
-          {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-        </button>
+      if (!audio.paused) {
+        audio.pause();
+        return;
+      }
 
-        <div className="modern-voice-wave" aria-hidden="true">
-          {Array.from({ length: 22 }).map((_, index) => (
-            <span
-              key={index}
-              style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
-            />
-          ))}
-        </div>
+      const audioDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const isAtEnd =
+        audio.ended ||
+        (audioDuration > 0 && audio.currentTime >= audioDuration - 0.15);
 
-        <span className="modern-voice-duration">{duration ?? 0}s</span>
-      </div>
-    );
+      if (isAtEnd) {
+        audio.currentTime = 0;
+      }
+
+      await audio.play();
+    } catch (error) {
+      console.error("Voice playback failed:", error);
+      setIsPlaying(false);
+      setHasError(true);
+    }
   }
+
+  return (
+    <div
+      className={`modern-voice-player ${isPlaying ? "is-playing" : ""} ${
+        hasError ? "has-error" : ""
+      }`}
+    >
+      <audio
+        key={safeSrc}
+        ref={audioRef}
+        src={safeSrc}
+        preload="auto"
+        onPlay={() => {
+          setIsPlaying(true);
+          setHasError(false);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          const audio = audioRef.current;
+          if (audio) {
+            audio.currentTime = 0;
+          }
+          setIsPlaying(false);
+        }}
+        onError={() => {
+          setIsPlaying(false);
+          setHasError(true);
+        }}
+      />
+
+      <button
+        className="voice-play-button"
+        type="button"
+        onClick={togglePlayback}
+        aria-label={isPlaying ? "Pause voice message" : "Play voice message"}
+      >
+        {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+      </button>
+
+      <div className="modern-voice-wave" aria-hidden="true">
+        {Array.from({ length: 22 }).map((_, index) => (
+          <span
+            key={index}
+            style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
+          />
+        ))}
+      </div>
+
+      <span className="modern-voice-duration">
+        {hasError ? "Error" : `${duration ?? 0}s`}
+      </span>
+    </div>
+  );
+}
 
 function pathForModule(module: ModuleKey) {
   return `/${moduleSlugs[module]}`;
@@ -2181,6 +2241,7 @@ export default function App() {
     useConvexAuth();
   const { user } = useUser();
   const clerk = useClerk();
+  const [isSendingChatMessage, setIsSendingChatMessage] = useState(false);
   const isSignedIn = Boolean(authReady && clerkSignedIn && user);
   const currentUserEmail =
     user?.primaryEmailAddress?.emailAddress ??
@@ -2309,6 +2370,7 @@ export default function App() {
   const setOnlineQuestionVotes = useMutation(api.questions.setVotes);
   const setOnlineAnswerHelpful = useMutation(api.questions.setAnswerHelpful);
   const setOnlineQuestionResolved = useMutation(api.questions.setResolved);
+  const removeOnlineAnswer = useMutation(api.questions.removeAnswer);
   const removeOnlineQuestion = useMutation(api.questions.remove);
   const adminRemoveOnlineQuestion = useMutation(api.questions.adminRemove);
   const addOnlineProfileReview = useMutation(api.profileReviews.add);
@@ -2537,7 +2599,14 @@ export default function App() {
     const directory = new Map<string, Profile>();
     const rememberProfile = (key: string, entry: Profile) => {
       const existing = directory.get(key);
-      if (existing?.profilePicture && !entry.profilePicture) {
+      const existingPicture = existing?.profilePicture ?? "";
+      const nextPicture = entry.profilePicture ?? "";
+      const existingIsRemote = Boolean(existingPicture && !isDataUrl(existingPicture));
+      const nextIsRemote = Boolean(nextPicture && !isDataUrl(nextPicture));
+      if (existingPicture && !nextPicture) {
+        return;
+      }
+      if (existingIsRemote && !nextIsRemote) {
         return;
       }
       directory.set(key, entry);
@@ -2626,7 +2695,14 @@ export default function App() {
       const key = username || entry.name.trim();
       if (!key) return;
       const existing = entries.get(key);
-      if (existing?.profilePicture && !entry.profilePicture) {
+      const existingPicture = existing?.profilePicture ?? "";
+      const nextPicture = entry.profilePicture ?? "";
+      const existingIsRemote = Boolean(existingPicture && !isDataUrl(existingPicture));
+      const nextIsRemote = Boolean(nextPicture && !isDataUrl(nextPicture));
+      if (existingPicture && !nextPicture) {
+        return;
+      }
+      if (existingIsRemote && !nextIsRemote) {
         return;
       }
       entries.set(key, entry);
@@ -4229,10 +4305,12 @@ export default function App() {
         "audio/ogg;codecs=opus",
         "audio/mp4",
       ].find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(
-        stream,
-        preferredType ? { mimeType: preferredType } : undefined,
-      );
+      const recorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "audio/webm",
+        audioBitsPerSecond: 32_000,
+      });
       voiceChunksRef.current = [];
       recordingStartedAtRef.current = Date.now();
       recorder.ondataavailable = (event) => {
@@ -4641,16 +4719,28 @@ export default function App() {
     }
   }
 
-  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (isSendingChatMessage) {
+      return;
+    }
+
     if (!ensureUserCanPost()) {
       return;
     }
+
+    const voiceSnapshot = messageVoice;
+    const voiceDurationSnapshot = messageVoiceDuration;
     const cleanContent = sanitizeLongText(messageDraft, 1000);
-    if (!cleanContent && !messageImage && !messageVoice && !messageAttachments.length) {
+
+    if (!cleanContent && !messageImage && !voiceSnapshot && !messageAttachments.length) {
       showNotice("Message needs text, media, a file, or a voice recording", "error");
       return;
     }
+
+    setIsSendingChatMessage(true);
+
     const message: ChatMessage = {
       id: uid("msg"),
       channel: activeChannel,
@@ -4660,8 +4750,8 @@ export default function App() {
       content: cleanContent,
       image: messageImage || undefined,
       attachments: messageAttachments.length ? messageAttachments : undefined,
-      voiceUrl: messageVoice || undefined,
-      voiceDuration: messageVoice ? messageVoiceDuration : undefined,
+      voiceUrl: voiceSnapshot || undefined,
+      voiceDuration: voiceSnapshot ? voiceDurationSnapshot : undefined,
       replyTo: replyingToMessage
         ? {
             id: replyingToMessage.id,
@@ -4669,7 +4759,9 @@ export default function App() {
             content:
               replyingToMessage.content ||
               (replyingToMessage.attachments?.length
-                ? `${replyingToMessage.attachments.length} attachment${replyingToMessage.attachments.length === 1 ? "" : "s"}`
+                ? `${replyingToMessage.attachments.length} attachment${
+                    replyingToMessage.attachments.length === 1 ? "" : "s"
+                  }`
                 : "") ||
               (replyingToMessage.voiceUrl
                 ? "Voice message"
@@ -4680,22 +4772,17 @@ export default function App() {
         : undefined,
       time: new Date().toISOString(),
     };
-    try {
-      await syncChatMessageToCloud(message);
-    } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Message could not sync online",
-        "error",
-      );
-      return;
-    }
+
     setMessages((current) => [...current, message]);
     setMessageDraft("");
     setMessageImage("");
     setMessageAttachments([]);
     setReplyingToMessage(null);
     clearVoiceMessage();
-    addNotification("Message sent", `Posted to ${activeChannel}.`, "community");
+
+    window.setTimeout(() => {
+      setIsSendingChatMessage(false);
+    }, voiceSnapshot ? 900 : 150);
   }
 
   function syncMessageEngagement(message: ChatMessage) {
@@ -4886,7 +4973,7 @@ export default function App() {
     addNotification("Question posted", question.title, "qa");
   }
 
-  function addAnswer(questionId: string) {
+  async function addAnswer(questionId: string) {
     const question = questions.find((entry) => entry.id === questionId);
 
     if (!question) {
@@ -4900,6 +4987,11 @@ export default function App() {
     }
 
     if (!ensureUserCanPost()) {
+      return;
+    }
+
+    if (isCurrentUserEntity(question.authorId, question.author)) {
+      showNotice("You cannot answer your own question", "error");
       return;
     }
 
@@ -4920,6 +5012,23 @@ export default function App() {
       time: new Date().toISOString(),
     };
 
+    try {
+      await addOnlineAnswer({
+        questionId,
+        answer: toConvexJson({
+          ...answer,
+          authorAvatar: safeRemoteMediaUrl(answer.authorAvatar),
+        }),
+      });
+    } catch (error) {
+      console.error(error);
+      showNotice(
+        error instanceof Error ? error.message : "Answer could not sync online",
+        "error",
+      );
+      return;
+    }
+
     setQuestions((current) =>
       current.map((question) =>
         question.id === questionId
@@ -4933,17 +5042,6 @@ export default function App() {
 
     setAnswerDrafts((current) => ({ ...current, [questionId]: "" }));
     addNotification("Answer added", "Your Q&A answer has been posted.", "qa");
-
-    addOnlineAnswer({
-      questionId,
-      answer: toConvexJson(answer),
-    }).catch((error) => {
-      console.error(error);
-      showNotice(
-        error instanceof Error ? error.message : "Answer could not sync online",
-        "error",
-      );
-    });
   }
 
   async function voteQuestion(questionId: string, amount: 1 | -1) {
@@ -5033,11 +5131,7 @@ export default function App() {
           ...editedQuestion,
           authorAvatar: safeRemoteMediaUrl(editedQuestion.authorAvatar),
           image: safeRemoteMediaUrl(editedQuestion.image),
-          answers: editedQuestion.answers.map((answer) => ({
-            ...answer,
-            authorAvatar: safeRemoteMediaUrl(answer.authorAvatar),
-            image: safeRemoteMediaUrl(answer.image),
-          })),
+          answers: [],
         }),
       });
     } catch (error) {
@@ -5118,6 +5212,42 @@ export default function App() {
           : question,
       ),
     );
+  }
+
+  async function deleteAnswer(questionId: string, answerId: string) {
+    const targetQuestion = questions.find((question) => question.id === questionId);
+    const targetAnswer = targetQuestion?.answers.find((answer) => answer.id === answerId);
+    if (!targetQuestion || !targetAnswer) {
+      showNotice("Answer was not found", "error");
+      return;
+    }
+    if (!isCurrentUserEntity(targetAnswer.authorId, targetAnswer.author)) {
+      showNotice("Only the answer author can delete this answer", "error");
+      return;
+    }
+    if (!window.confirm("Delete this answer?")) {
+      return;
+    }
+    try {
+      await removeOnlineAnswer({ questionId, answerId });
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Answer could not be deleted online",
+        "error",
+      );
+      return;
+    }
+    setQuestions((current) =>
+      current.map((question) =>
+        question.id === questionId
+          ? {
+              ...question,
+              answers: question.answers.filter((answer) => answer.id !== answerId),
+            }
+          : question,
+      ),
+    );
+    setAnswerActionId(null);
   }
 
   function handlePaperUpload(event: FormEvent<HTMLFormElement>) {
@@ -6777,7 +6907,7 @@ export default function App() {
                       }}
                     >
                       <PersonAvatar
-                        image={message.authorAvatar || getProfile(message.author).profilePicture}
+                        image={getProfile(message.author).profilePicture || message.authorAvatar}
                         name={message.author}
                         size={30}
                       />
@@ -7141,7 +7271,7 @@ export default function App() {
                             }}
                           >
                             <PersonAvatar
-                              image={item.sellerAvatar || getProfile(item.seller).profilePicture}
+                              image={getProfile(item.seller).profilePicture || item.sellerAvatar}
                               name={item.seller}
                               size={28}
                             />
@@ -7331,12 +7461,12 @@ export default function App() {
                   }}
                 >
                   <div className="seller-avatar">
-                    {selectedListing.sellerAvatar ||
-                    getProfile(selectedListing.seller).profilePicture ? (
+                    {getProfile(selectedListing.seller).profilePicture ||
+                    selectedListing.sellerAvatar ? (
                       <img
                         src={
-                          selectedListing.sellerAvatar ||
-                          getProfile(selectedListing.seller).profilePicture
+                          getProfile(selectedListing.seller).profilePicture ||
+                          selectedListing.sellerAvatar
                         }
                         alt=""
                       />
@@ -8011,8 +8141,8 @@ export default function App() {
                           >
                             <PersonAvatar
                               image={
-                                message.authorAvatar ||
-                                getProfile(message.author).profilePicture
+                                getProfile(message.author).profilePicture ||
+                                message.authorAvatar
                               }
                               name={message.author}
                               size={30}
@@ -8087,12 +8217,13 @@ export default function App() {
                             ))}
                           </div>
                         ) : null}
-                          {message.voiceUrl && (
+                          {message.voiceUrl ? (
                             <ModernVoicePlayer
+                              key={`${message.id}-${message.voiceUrl.slice(0, 40)}`}
                               src={message.voiceUrl}
                               duration={message.voiceDuration}
                             />
-                          )}
+                          ) : null}
                           {translatedItems[`message-${message.id}`] && (
                             <p className="translation-box">
                               {translatedItems[`message-${message.id}`]}
@@ -8190,6 +8321,7 @@ export default function App() {
                   setMessageDraft(value);
                 }}
                 onSubmit={handleChatSubmit}
+                isSending={isSendingChatMessage}
                 placeholder="Type a message"
                 attachments={messageAttachments}
                 onAttach={updateMessageAttachments}
@@ -8384,8 +8516,8 @@ export default function App() {
                         >
                           <PersonAvatar
                             image={
-                              question.authorAvatar ||
-                              getProfile(question.author).profilePicture
+                              getProfile(question.author).profilePicture ||
+                              question.authorAvatar
                             }
                             name={question.author}
                             size={30}
@@ -8537,8 +8669,8 @@ export default function App() {
                                   >
                                     <PersonAvatar
                                       image={
-                                        answer.authorAvatar ||
-                                        getProfile(answer.author).profilePicture
+                                        getProfile(answer.author).profilePicture ||
+                                        answer.authorAvatar
                                       }
                                       name={answer.author}
                                       size={28}
@@ -8567,6 +8699,18 @@ export default function App() {
                                       <Languages size={14} aria-hidden="true" />
                                       Translate
                                     </button>
+                                    {isCurrentUserEntity(answer.authorId, answer.author) && (
+                                      <button
+                                        className="danger-action"
+                                        type="button"
+                                        onClick={() =>
+                                          deleteAnswer(question.id, answer.id)
+                                        }
+                                      >
+                                        <Trash2 size={14} aria-hidden="true" />
+                                        Delete
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                                 <button
@@ -8581,6 +8725,16 @@ export default function App() {
                                   <ThumbsUp size={15} aria-hidden="true" />
                                   {t("helpful")} {answer.helpful}
                                 </button>
+                                {isCurrentUserEntity(answer.authorId, answer.author) && (
+                                  <button
+                                    className="ghost-button mini-button answer-delete-button"
+                                    type="button"
+                                    onClick={() => deleteAnswer(question.id, answer.id)}
+                                  >
+                                    <Trash2 size={14} aria-hidden="true" />
+                                    Delete
+                                  </button>
+                                )}
                               </article>
                             );
                           })}
@@ -8588,6 +8742,10 @@ export default function App() {
                         {question.resolved ? (
                           <p className="locked-answer-note">
                             This question is resolved, so new answers are locked.
+                          </p>
+                        ) : isCurrentUserEntity(question.authorId, question.author) ? (
+                          <p className="locked-answer-note">
+                            You cannot answer your own question.
                           </p>
                         ) : (
                           <div className="answer-composer">
@@ -9204,8 +9362,8 @@ export default function App() {
                       >
                         <PersonAvatar
                           image={
-                            request.requesterAvatar ||
-                            getProfile(request.requester).profilePicture
+                            getProfile(request.requester).profilePicture ||
+                            request.requesterAvatar
                           }
                           name={request.requester}
                           size={30}
@@ -11070,6 +11228,9 @@ export default function App() {
           </section>
         )}
 
+        <footer className="app-footer">
+          © 2026 EverythingUTM LLC. All rights reserved.
+        </footer>
       </main>
       {destinationPreview && (
         <div className="destination-preview" aria-hidden="true">
