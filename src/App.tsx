@@ -3369,7 +3369,7 @@ export default function App() {
     () => [...chatChannels, ...directChannels],
     [directChannels],
   );
-
+  const chatThreadRef = useRef<HTMLDivElement | null>(null);
   const channelMessages = useMemo(
   () =>
     messages
