@@ -73,6 +73,8 @@ import {
   MessageCircle,
   MessagesSquare,
   Mic,
+  Play,
+  Pause,
   Moon,
   Navigation,
   PackagePlus,
@@ -832,6 +834,61 @@ function moduleFromPath(path = window.location.pathname) {
   const slug = normalizePath(path) || "home";
   return moduleKeysBySlug[slug] ?? null;
 }
+
+function ModernVoicePlayer({
+    src,
+    duration,
+  }: {
+    src: string;
+    duration?: number;
+  }) {
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+
+    function togglePlayback() {
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      if (audio.paused) {
+        audio.play().catch(() => setIsPlaying(false));
+      } else {
+        audio.pause();
+      }
+    }
+
+    return (
+      <div className={`modern-voice-player ${isPlaying ? "is-playing" : ""}`}>
+        <audio
+          ref={audioRef}
+          src={src}
+          preload="metadata"
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onEnded={() => setIsPlaying(false)}
+        />
+
+        <button
+          className="voice-play-button"
+          type="button"
+          onClick={togglePlayback}
+          aria-label={isPlaying ? "Pause voice message" : "Play voice message"}
+        >
+          {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+        </button>
+
+        <div className="modern-voice-wave" aria-hidden="true">
+          {Array.from({ length: 22 }).map((_, index) => (
+            <span
+              key={index}
+              style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
+            />
+          ))}
+        </div>
+
+        <span className="modern-voice-duration">{duration ?? 0}s</span>
+      </div>
+    );
+  }
 
 function pathForModule(module: ModuleKey) {
   return `/${moduleSlugs[module]}`;
@@ -8030,29 +8087,16 @@ export default function App() {
                             ))}
                           </div>
                         ) : null}
-                        {message.voiceUrl && (
-                          <div className="voice-message">
-                            <span className="voice-play-dot">
-                              <Mic size={14} aria-hidden="true" />
-                            </span>
-                            <div className="voice-bars" aria-hidden="true">
-                              {Array.from({ length: 18 }).map((_, index) => (
-                                <span
-                                  key={index}
-                                  style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
-                                />
-                              ))}
-                            </div>
-                            <audio controls src={message.voiceUrl}>
-                              Voice message
-                            </audio>
-                            <span>{message.voiceDuration ?? 0}s</span>
-                          </div>
-                        )}
-                        {translatedItems[`message-${message.id}`] && (
-                          <p className="translation-box">
-                            {translatedItems[`message-${message.id}`]}
-                          </p>
+                          {message.voiceUrl && (
+                            <ModernVoicePlayer
+                              src={message.voiceUrl}
+                              duration={message.voiceDuration}
+                            />
+                          )}
+                          {translatedItems[`message-${message.id}`] && (
+                            <p className="translation-box">
+                              {translatedItems[`message-${message.id}`]}
+                            </p>
                         )}
                         <div className="reaction-row">
                           {reactionEntries.map(([reaction, users]) => (
@@ -8171,30 +8215,13 @@ export default function App() {
                     </>
                   ) : undefined
                 }
-                onCancelReply={() => setReplyingToMessage(null)}
                 voicePreview={
                   isRecordingVoice ? (
-                    <>
-                      <span className="voice-recording-dot" />
-                      <div>
-                        <strong>Recording voice</strong>
-                        <span>{recordingDuration}s</span>
-                      </div>
-                      <div className="voice-bars is-live" aria-hidden="true">
-                        {Array.from({ length: 18 }).map((_, index) => (
-                          <span
-                            key={index}
-                            style={{ "--bar": `${(index % 6) + 3}` } as CSSProperties}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  ) : messageVoice ? (
                     <>
                       <span className="voice-play-dot">
                         <Mic size={14} aria-hidden="true" />
                       </span>
-                      <div className="voice-bars" aria-hidden="true">
+                      <div className="voice-bars is-recording" aria-hidden="true">
                         {Array.from({ length: 18 }).map((_, index) => (
                           <span
                             key={index}
@@ -8202,14 +8229,16 @@ export default function App() {
                           />
                         ))}
                       </div>
-                      <audio controls src={messageVoice}>
-                        Voice preview
-                      </audio>
                       <span className="voice-ready-chip">
                         <Mic size={14} aria-hidden="true" />
-                        {messageVoiceDuration}s
+                        Recording...
                       </span>
                     </>
+                  ) : messageVoice ? (
+                    <ModernVoicePlayer
+                      src={messageVoice}
+                      duration={messageVoiceDuration}
+                    />
                   ) : undefined
                 }
                 onClearVoice={isRecordingVoice ? undefined : clearVoiceMessage}
