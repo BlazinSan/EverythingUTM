@@ -11,8 +11,14 @@
 import type * as accounts from "../accounts.js";
 import type * as appState from "../appState.js";
 import type * as bugReports from "../bugReports.js";
+import type * as campusPlaces from "../campusPlaces.js";
+import type * as chats from "../chats.js";
+import type * as files from "../files.js";
+import type * as marketplace from "../marketplace.js";
+import type * as profileReviews from "../profileReviews.js";
 import type * as profiles from "../profiles.js";
 import type * as questions from "../questions.js";
+import type * as requests from "../requests.js";
 
 import type {
   ApiFromModules,
@@ -24,8 +30,14 @@ declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   appState: typeof appState;
   bugReports: typeof bugReports;
+  campusPlaces: typeof campusPlaces;
+  chats: typeof chats;
+  files: typeof files;
+  marketplace: typeof marketplace;
+  profileReviews: typeof profileReviews;
   profiles: typeof profiles;
   questions: typeof questions;
+  requests: typeof requests;
 }>;
 
 /**
