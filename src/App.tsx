@@ -1222,8 +1222,18 @@ function isDataUrl(value?: string) {
 }
 
 async function dataUrlToBlob(dataUrl: string) {
-  const response = await fetch(dataUrl);
-  return await response.blob();
+  const [metadata = "", base64Data = ""] = dataUrl.split(",");
+  const mimeMatch = metadata.match(/^data:([^;]+)/);
+  const mimeType = mimeMatch?.[1] || "application/octet-stream";
+
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+
+  for (let index = 0; index < binaryString.length; index += 1) {
+    bytes[index] = binaryString.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
 }
 
 function safeRemoteMediaUrl(value?: string) {
