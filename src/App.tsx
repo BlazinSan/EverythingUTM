@@ -1039,7 +1039,6 @@ function clearEverythingUtmStorage() {
       .filter((key) => key.startsWith("everything-utm:"))
       .forEach((key) => window.localStorage.removeItem(key));
   } catch {
-    // The in-memory React state is still cleared by the caller.
   }
 }
 
@@ -2030,7 +2029,6 @@ function useLocalStorageState<T>(
     try {
       window.localStorage.setItem(key, JSON.stringify(cleanState));
     } catch {
-      // Local storage can fail in private windows or if file uploads are very large.
     }
 
     if (syncOnline && convexLoaded) {
@@ -2038,7 +2036,6 @@ function useLocalStorageState<T>(
         storageKey: key,
         data: toConvexJson(cleanState),
       }).catch(() => {
-        // Keep the app usable offline or before Convex auth is configured.
       });
     }
   }, [key, state, convexLoaded, syncOnline, upsertOnlineState]);
@@ -2053,7 +2050,6 @@ function useLocalStorageState<T>(
       try {
         window.localStorage.setItem(key, JSON.stringify(cleanNext));
       } catch {
-        // Keep the app responsive even if browser storage is temporarily full.
       }
       if (syncOnline && convexLoaded) {
         upsertOnlineState({
