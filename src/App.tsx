@@ -4295,13 +4295,22 @@ export default function App() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioProbe = document.createElement("audio");
       const preferredType = [
-        "audio/mp4",
-        "audio/aac",
         "audio/webm;codecs=opus",
         "audio/webm",
+        "audio/mp4;codecs=mp4a.40.2",
+        "audio/mp4",
+        "audio/aac",
         "audio/ogg;codecs=opus",
-      ].find((type) => MediaRecorder.isTypeSupported(type));
+      ].find((type) => {
+        const canRecord = MediaRecorder.isTypeSupported(type);
+        const baseType = type.split(";")[0];
+        const canPlay =
+          audioProbe.canPlayType(type) !== "" ||
+          audioProbe.canPlayType(baseType) !== "";
+        return canRecord && canPlay;
+      });
       const recorderOptions: MediaRecorderOptions = {
         audioBitsPerSecond: 32_000,
       };
@@ -4321,12 +4330,19 @@ export default function App() {
           1,
           Math.round((Date.now() - recordingStartedAtRef.current) / 1000),
         );
+        const recordedType =
+          recorder.mimeType ||
+          voiceChunksRef.current[0]?.type ||
+          preferredType ||
+          "audio/webm";
+
+        const safeRecordedType =
+          recordedType.includes("audio/mp4") && recordedType.includes("opus")
+            ? "audio/webm;codecs=opus"
+            : recordedType;
+
         const blob = new Blob(voiceChunksRef.current, {
-          type:
-            recorder.mimeType ||
-            preferredType ||
-            voiceChunksRef.current[0]?.type ||
-            "audio/webm",
+          type: safeRecordedType,
         });
         stream.getTracks().forEach((track) => track.stop());
         mediaRecorderRef.current = null;
