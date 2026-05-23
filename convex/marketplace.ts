@@ -92,9 +92,14 @@ export const list = query({
       return [];
     }
     const rows = await ctx.db.query("marketplaceListings").order("desc").take(80);
-    const activeRows = rows.filter((row) => !row.deletedAt);
     return await Promise.all(
-      activeRows.map(async (row) => withListingMedia(ctx, row.listing)),
+      rows.map(async (row) => {
+        const listing = asRecord(row.listing);
+        if (row.deletedAt && typeof listing.deletedAt !== "string") {
+          listing.deletedAt = row.deletedAt;
+        }
+        return withListingMedia(ctx, listing);
+      }),
     );
   },
 });

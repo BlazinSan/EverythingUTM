@@ -4921,3 +4921,40 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* Fixed marketplace reels viewport: every post keeps the same phone-like size. */
+.reels-module .reels-layout {
+  width: 100%;
+  justify-items: center;
+}
+
+.reels-module .focus-rail-panel,
+.reels-module .reels-stage {
+  width: min(390px, 100%);
+  min-height: 620px;
+  height: 620px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.reels-module .focus-rail-panel > * {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+.reels-module .focus-rail-panel img,
+.reels-module .focus-rail-panel video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 640px) {
+  .reels-module .focus-rail-panel,
+  .reels-module .reels-stage {
+    width: min(360px, calc(100vw - 28px));
+    height: min(600px, calc(100vh - 180px));
+    min-height: 520px;
+  }
+}

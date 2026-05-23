@@ -4296,17 +4296,19 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const preferredType = [
+        "audio/mp4",
+        "audio/aac",
         "audio/webm;codecs=opus",
         "audio/webm",
         "audio/ogg;codecs=opus",
-        "audio/mp4",
       ].find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "audio/webm",
+      const recorderOptions: MediaRecorderOptions = {
         audioBitsPerSecond: 32_000,
-      });
+      };
+      if (preferredType) {
+        recorderOptions.mimeType = preferredType;
+      }
+      const recorder = new MediaRecorder(stream, recorderOptions);
       voiceChunksRef.current = [];
       recordingStartedAtRef.current = Date.now();
       recorder.ondataavailable = (event) => {
@@ -4715,7 +4717,7 @@ export default function App() {
     }
   }
 
-  function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (isSendingChatMessage) {
@@ -4776,9 +4778,17 @@ export default function App() {
     setReplyingToMessage(null);
     clearVoiceMessage();
 
-    window.setTimeout(() => {
+    try {
+      await syncChatMessageToCloud(message);
+    } catch (error) {
+      setMessages((current) => current.filter((entry) => entry.id !== message.id));
+      showNotice(
+        error instanceof Error ? error.message : "Message could not sync online",
+        "error",
+      );
+    } finally {
       setIsSendingChatMessage(false);
-    }, voiceSnapshot ? 900 : 150);
+    }
   }
 
   function syncMessageEngagement(message: ChatMessage) {

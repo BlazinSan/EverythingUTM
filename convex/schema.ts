@@ -96,6 +96,7 @@ export default defineSchema({
     message: v.any(),
     createdAt: v.number(),
     createdBy: v.string(),
+    deletedAt: v.optional(v.string()),
   })
     .index("by_messageId", ["messageId"])
     .index("by_channel_and_createdAt", ["channel", "createdAt"]),

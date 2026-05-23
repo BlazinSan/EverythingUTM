@@ -126,7 +126,13 @@ export const list = query({
     }
     const rows = await ctx.db.query("chatMessages").order("desc").take(120);
     const messages = await Promise.all(
-      rows.reverse().map(async (row) => withMessageMedia(ctx, row.message)),
+      rows.reverse().map(async (row) => {
+        const message = asRecord(row.message);
+        if (row.deletedAt && typeof message.deletedAt !== "string") {
+          message.deletedAt = row.deletedAt;
+        }
+        return withMessageMedia(ctx, message);
+      }),
     );
     return messages;
   },
@@ -233,7 +239,15 @@ export const remove = mutation({
     if (existing.createdBy !== userId) {
       throw new Error("Only the message author can delete this message.");
     }
-    await ctx.db.delete(existing._id);
+    const deletedAt = new Date().toISOString();
+    await ctx.db.patch(existing._id, {
+      message: {
+        ...asRecord(existing.message),
+        deletedAt,
+        deletedBy: userId,
+      },
+      deletedAt,
+    });
     return existing._id;
   },
 });
@@ -251,7 +265,15 @@ export const adminRemove = mutation({
     if (!existing) {
       return null;
     }
-    await ctx.db.delete(existing._id);
+    const deletedAt = new Date().toISOString();
+    await ctx.db.patch(existing._id, {
+      message: {
+        ...asRecord(existing.message),
+        deletedAt,
+        deletedBy: "admin",
+      },
+      deletedAt,
+    });
     return existing._id;
   },
 });
