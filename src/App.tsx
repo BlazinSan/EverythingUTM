@@ -2289,6 +2289,13 @@ export default function App() {
     "everything-utm:marketplace",
     [],
   );
+  const [marketplaceSyncQueue, setMarketplaceSyncQueue] = useLocalStorageState<
+    Array<
+      | { type: "upsert"; listingId: string; listing: MarketplaceItem }
+      | { type: "markDeleted"; listingId: string; deletedAt: string }
+      | { type: "setSold"; listingId: string; sold: boolean; soldAt?: string }
+    >
+  >("everything-utm:marketplace-sync-queue", []);
   const [favourites, setFavourites] = useLocalStorageState<string[]>(
     "everything-utm:favourites",
     [],
@@ -2917,6 +2924,49 @@ export default function App() {
     return true;
   }
 
+  async function flushMarketplaceSyncQueue() {
+    if (!isSignedIn || !convexAuthenticated || !marketplaceSyncQueue.length) {
+      return;
+    }
+    let remaining = [...marketplaceSyncQueue];
+    for (const operation of marketplaceSyncQueue) {
+      try {
+        if (operation.type === "upsert") {
+          const latestLocal = marketplace.find((entry) => entry.id === operation.listingId);
+          if (!latestLocal || latestLocal.deletedAt) {
+            remaining = remaining.filter((item) => item !== operation);
+            continue;
+          }
+          const { cloudItem } = await prepareListingForCloud(
+            latestLocal,
+            latestLocal,
+          );
+          await upsertOnlineListing({
+            listingId: operation.listingId,
+            listing: toConvexJson(cloudItem),
+          });
+        } else if (operation.type === "markDeleted") {
+          await markOnlineListingDeleted({
+            listingId: operation.listingId,
+            deletedAt: operation.deletedAt,
+          });
+        } else {
+          await setOnlineListingSold({
+            listingId: operation.listingId,
+            sold: operation.sold,
+            ...(operation.soldAt ? { soldAt: operation.soldAt } : {}),
+          });
+        }
+        remaining = remaining.filter((item) => item !== operation);
+      } catch {
+        break;
+      }
+    }
+    if (remaining.length !== marketplaceSyncQueue.length) {
+      setMarketplaceSyncQueue(remaining);
+    }
+  }
+
   function canUseUpload(file: File) {
     if (!isUploadTooLarge(file)) {
       return true;
@@ -2924,6 +2974,15 @@ export default function App() {
     showNotice(`${file.name} is larger than ${MAX_UPLOAD_LABEL}.`, "error");
     return false;
   }
+
+  useEffect(() => {
+    flushMarketplaceSyncQueue().catch(() => undefined);
+  }, [
+    convexAuthenticated,
+    isSignedIn,
+    marketplace,
+    marketplaceSyncQueue,
+  ]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = appSettings.theme;
@@ -4514,11 +4573,12 @@ export default function App() {
       });
       setMarketplace((current) => [localItem, ...current]);
     } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Listing could not be saved online",
-        "error",
-      );
-      return;
+      setMarketplace((current) => [item, ...current]);
+      setMarketplaceSyncQueue((current) => [
+        ...current.filter((entry) => !(entry.type === "upsert" && entry.listingId === item.id)),
+        { type: "upsert", listingId: item.id, listing: item },
+      ]);
+      showNotice("Listing saved locally and will sync when connection is restored.", "error");
     }
     setListingDraft(initialListing);
     setListingImages([]);
@@ -4592,11 +4652,14 @@ export default function App() {
         current.map((item) => (item.id === itemId ? localItem : item)),
       );
     } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Listing changes could not sync online",
-        "error",
+      setMarketplace((current) =>
+        current.map((item) => (item.id === itemId ? editedListing : item)),
       );
-      return;
+      setMarketplaceSyncQueue((current) => [
+        ...current.filter((entry) => !(entry.type === "upsert" && entry.listingId === itemId)),
+        { type: "upsert", listingId: itemId, listing: editedListing },
+      ]);
+      showNotice("Listing changes saved locally and queued to sync online.", "error");
     }
     setEditingListingId(null);
     showNotice("Listing updated");
@@ -4615,11 +4678,11 @@ export default function App() {
     try {
       await markOnlineListingDeleted({ listingId: itemId, deletedAt });
     } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Listing could not be deleted online",
-        "error",
-      );
-      return;
+      setMarketplaceSyncQueue((current) => [
+        ...current.filter((entry) => !(entry.type === "markDeleted" && entry.listingId === itemId)),
+        { type: "markDeleted", listingId: itemId, deletedAt },
+      ]);
+      showNotice("Listing deleted locally and queued to sync online.", "error");
     }
     setMarketplace((current) =>
       current.map((item) =>
@@ -4649,11 +4712,11 @@ export default function App() {
         ...(soldAt ? { soldAt } : {}),
       });
     } catch (error) {
-      showNotice(
-        error instanceof Error ? error.message : "Sold status could not sync online",
-        "error",
-      );
-      return;
+      setMarketplaceSyncQueue((current) => [
+        ...current.filter((entry) => !(entry.type === "setSold" && entry.listingId === itemId)),
+        { type: "setSold", listingId: itemId, sold: nextSold, ...(soldAt ? { soldAt } : {}) },
+      ]);
+      showNotice("Sold status updated locally and queued to sync online.", "error");
     }
     setMarketplace((current) =>
       current.map((item) =>
