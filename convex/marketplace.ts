@@ -8,7 +8,10 @@ async function requireUser(ctx: QueryCtx | MutationCtx) {
   if (!identity) {
     throw new Error("You must be signed in.");
   }
-  return identity.tokenIdentifier;
+  return {
+    userId: identity.tokenIdentifier,
+    keys: [identity.tokenIdentifier, identity.subject].filter(Boolean),
+  };
 }
 
 async function requireOwner(ctx: QueryCtx | MutationCtx) {
@@ -24,6 +27,12 @@ function asRecord(value: unknown) {
   return value && typeof value === "object"
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function ownsListing(row: { createdBy: string; listing: unknown }, authKeys: string[]) {
+  const listing = asRecord(row.listing);
+  const sellerId = typeof listing.sellerId === "string" ? listing.sellerId : "";
+  return authKeys.includes(row.createdBy) || Boolean(sellerId && authKeys.includes(sellerId));
 }
 
 function sanitizeListingForStorage(value: unknown, userId: string) {
@@ -110,7 +119,7 @@ export const upsert = mutation({
     listing: v.any(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
+    const { userId, keys } = await requireUser(ctx);
     const listing = sanitizeListingForStorage(args.listing, userId);
     const existing = await ctx.db
       .query("marketplaceListings")
@@ -119,7 +128,7 @@ export const upsert = mutation({
     const now = Date.now();
 
     if (existing) {
-      if (existing.createdBy !== userId) {
+      if (!ownsListing(existing, keys)) {
         throw new Error("Only the listing author can update this post.");
       }
       const patch: {
@@ -164,7 +173,7 @@ export const markDeleted = mutation({
     deletedAt: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
+    const { userId, keys } = await requireUser(ctx);
     const existing = await ctx.db
       .query("marketplaceListings")
       .withIndex("by_listingId", (q) => q.eq("listingId", args.listingId))
@@ -172,7 +181,7 @@ export const markDeleted = mutation({
     if (!existing) {
       return null;
     }
-    if (existing.createdBy !== userId) {
+    if (!ownsListing(existing, keys)) {
       throw new Error("Only the listing author can delete this post.");
     }
     await ctx.db.patch(existing._id, {
@@ -195,7 +204,7 @@ export const setSold = mutation({
     soldAt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx);
+    const { keys } = await requireUser(ctx);
     const existing = await ctx.db
       .query("marketplaceListings")
       .withIndex("by_listingId", (q) => q.eq("listingId", args.listingId))
@@ -203,7 +212,7 @@ export const setSold = mutation({
     if (!existing) {
       return null;
     }
-    if (existing.createdBy !== userId) {
+    if (!ownsListing(existing, keys)) {
       throw new Error("Only the listing author can update this post.");
     }
     const listing: Record<string, unknown> = {

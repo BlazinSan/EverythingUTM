@@ -1800,6 +1800,42 @@ function sameStoredState(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function createSeededRandom(seed: number) {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let next = value;
+    next = Math.imul(next ^ (next >>> 15), next | 1);
+    next ^= next + Math.imul(next ^ (next >>> 7), next | 61);
+    return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededShuffle<T>(
+  items: T[],
+  seed: number,
+  getKey: (item: T) => string,
+) {
+  const shuffled = [...items];
+  const random = createSeededRandom(seed || 1);
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    const current = shuffled[index];
+    shuffled[index] = shuffled[swapIndex];
+    shuffled[swapIndex] = current;
+  }
+
+  if (
+    shuffled.length > 1 &&
+    shuffled.every((item, index) => getKey(item) === getKey(items[index]))
+  ) {
+    const offset = (seed % (shuffled.length - 1)) + 1;
+    return [...shuffled.slice(offset), ...shuffled.slice(0, offset)];
+  }
+
+  return shuffled;
+}
+
 function itemId(value: unknown) {
   return typeof value === "object" && value !== null && "id" in value
     ? String((value as { id?: unknown }).id ?? "")
@@ -2514,6 +2550,9 @@ export default function App() {
 
   const [bugReportDraft, setBugReportDraft] = useState("");
   const [bugReportLoading, setBugReportLoading] = useState(false);
+  const [familyShuffleSeed, setFamilyShuffleSeed] = useState(() =>
+    Math.floor(Math.random() * 1_000_000_000),
+  );
   
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
   const longPressTimers = useRef<Record<string, number>>({});
@@ -2524,6 +2563,8 @@ export default function App() {
   const notifiedTagIdsRef = useRef(new Set<string>());
   const preferencesSnapshotRef = useRef("");
   const legacyCleanupStartedRef = useRef(false);
+  const marketplaceSyncingIdsRef = useRef(new Set<string>());
+  const marketplaceSyncedIdsRef = useRef(new Set<string>());
   const messageSwipeRef = useRef<{ id: string; x: number; y: number } | null>(
     null,
   );
@@ -2534,6 +2575,12 @@ export default function App() {
   });
 
   const profileData: Profile = { ...appUser, ...profile };
+  useEffect(() => {
+    if (activeModule === "family") {
+      setFamilyShuffleSeed(Math.floor(Math.random() * 1_000_000_000));
+    }
+  }, [activeModule]);
+
   const campusLocations = useMemo(() => {
     const byId = new Map<string, CampusLocation>();
     seedCampusLocations.forEach((location) => byId.set(location.id, location));
@@ -2715,26 +2762,48 @@ export default function App() {
     };
     add(profileData);
     publicProfiles.forEach(add);
-    return Array.from(entries.values()).sort((a, b) =>
-      (a.name || a.username || "").localeCompare(b.name || b.username || ""),
+    return seededShuffle(
+      Array.from(entries.values()),
+      familyShuffleSeed,
+      (entry) => sanitizeUsername(entry.username ?? "") || entry.name || entry.matricNumber || "",
     );
-  }, [profileData, publicProfiles]);
+  }, [familyShuffleSeed, profileData, publicProfiles]);
   const familyGalleryImages = useMemo(
-    () =>
-      familyProfiles.length
-        ? familyProfiles.map((entry) => ({
+    () => {
+      if (!familyProfiles.length) {
+        return [
+          {
+            src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Ccircle cx='160' cy='160' r='132' fill='%23232b37'/%3E%3C/svg%3E",
+            alt: "Empty profile placeholder",
+          },
+        ];
+      }
+
+      const galleryProfiles =
+        familyProfiles.length > 1
+          ? Array.from(
+              { length: Math.max(4, Math.ceil(28 / familyProfiles.length)) },
+              (_, index) =>
+                seededShuffle(
+                  familyProfiles,
+                  familyShuffleSeed + (index + 1) * 1009,
+                  (entry) =>
+                    sanitizeUsername(entry.username ?? "") ||
+                    entry.name ||
+                    entry.matricNumber ||
+                    "",
+                ),
+            ).flat()
+          : familyProfiles;
+
+      return galleryProfiles.map((entry) => ({
             src:
               entry.profilePicture ||
               "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Ccircle cx='160' cy='160' r='132' fill='%23232b37'/%3E%3Ccircle cx='160' cy='128' r='48' fill='%236f7888'/%3E%3Cpath d='M76 262c18-58 150-58 168 0' fill='%236f7888'/%3E%3C/svg%3E",
             alt: entry.name || usernameDisplay(entry.username),
-          }))
-        : [
-            {
-              src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'%3E%3Ccircle cx='160' cy='160' r='132' fill='%23232b37'/%3E%3C/svg%3E",
-              alt: "Empty profile placeholder",
-            },
-          ],
-    [familyProfiles],
+          }));
+    },
+    [familyProfiles, familyShuffleSeed],
   );
   const reelItems = useMemo(
     () =>
@@ -3285,6 +3354,11 @@ export default function App() {
     if (!onlineMarketplace) {
       return;
     }
+    onlineMarketplace.forEach((item) => {
+      if (item.id) {
+        marketplaceSyncedIdsRef.current.add(item.id);
+      }
+    });
     setMarketplace((current) => {
       const next = mergeOnlineAndLocalState(
         "everything-utm:marketplace",
@@ -3294,6 +3368,69 @@ export default function App() {
       return sameStoredState(next, current) ? current : next;
     });
   }, [onlineMarketplace, setMarketplace]);
+
+  useEffect(() => {
+    if (!isSignedIn || !convexAuthenticated || !onlineMarketplace) {
+      return undefined;
+    }
+    const onlineIds = new Set(onlineMarketplace.map((item) => item.id));
+    const candidates = marketplace
+      .filter((item) => {
+        if (!item.id || item.deletedAt || demoDataIds.marketplace.has(item.id)) {
+          return false;
+        }
+        if (onlineIds.has(item.id) || marketplaceSyncedIdsRef.current.has(item.id)) {
+          return false;
+        }
+        if (marketplaceSyncingIdsRef.current.has(item.id)) {
+          return false;
+        }
+        return isCurrentUserEntity(item.sellerId, item.seller);
+      })
+      .slice(0, 4);
+
+    if (!candidates.length) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    candidates.forEach((item) => {
+      marketplaceSyncingIdsRef.current.add(item.id);
+      void (async () => {
+        try {
+          const { localItem, cloudItem } = await prepareListingForCloud(item);
+          await upsertOnlineListing({
+            listingId: item.id,
+            listing: toConvexJson(cloudItem),
+          });
+          marketplaceSyncedIdsRef.current.add(item.id);
+          if (!cancelled) {
+            setMarketplace((current) =>
+              current.map((entry) => (entry.id === item.id ? localItem : entry)),
+            );
+          }
+        } catch (error) {
+          console.warn("Marketplace listing retry sync failed", error);
+        } finally {
+          marketplaceSyncingIdsRef.current.delete(item.id);
+        }
+      })();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    convexAuthenticated,
+    currentUserId,
+    isSignedIn,
+    marketplace,
+    onlineMarketplace,
+    profileData.matricNumber,
+    profileData.name,
+    setMarketplace,
+    upsertOnlineListing,
+  ]);
 
   useEffect(() => {
     if (!onlineMessages) {
@@ -9766,6 +9903,8 @@ export default function App() {
                   minRadius={360}
                   openedImageWidth="320px"
                   openedImageHeight="320px"
+                  imageBorderRadius="9999px"
+                  openedImageBorderRadius="9999px"
                   overlayBlurColor="var(--bg)"
                   grayscale={false}
                 />

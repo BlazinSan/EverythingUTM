@@ -108,6 +108,7 @@ main.dg-sphere-main {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
   filter: var(--image-filter, none);
   pointer-events: none;
   backface-visibility: hidden;
@@ -170,6 +171,7 @@ main.dg-sphere-main {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
   filter: var(--image-filter, none);
 }
 
