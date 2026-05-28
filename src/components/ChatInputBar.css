@@ -1,6 +1,6 @@
 .chat-input-bar {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  bottom: auto;
   z-index: 5;
   display: grid;
   gap: 9px;
@@ -123,13 +123,23 @@
   }
 
   .chat-input-shell {
+    grid-template-columns: 42px minmax(0, 1fr) 42px 46px;
+    align-items: center;
     gap: 6px;
     padding: 6px;
   }
 
+  .chat-input-shell textarea {
+    min-height: 40px;
+    max-height: 86px;
+    padding: 8px 3px;
+    font-size: 16px;
+    line-height: 1.35;
+  }
+
   .chat-send-button {
-    width: 34px;
-    min-width: 34px;
-    height: 34px;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
   }
 }
