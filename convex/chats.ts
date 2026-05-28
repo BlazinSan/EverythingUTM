@@ -117,6 +117,12 @@ async function withMessageMedia(ctx: QueryCtx, message: unknown) {
   return copy;
 }
 
+function cleanAvatar(value: unknown) {
+  return typeof value === "string" && value && !value.startsWith("data:")
+    ? value.slice(0, 1000)
+    : undefined;
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -135,6 +141,36 @@ export const list = query({
       }),
     );
     return messages;
+  },
+});
+
+export const listTyping = query({
+  args: {
+    channel: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("chatTyping")
+      .withIndex("by_channel_and_expiresAt", (q) =>
+        q.eq("channel", args.channel.slice(0, 80)).gt("expiresAt", now),
+      )
+      .order("desc")
+      .take(12);
+    return rows
+      .filter((row) => row.userId !== identity.tokenIdentifier)
+      .map((row) => ({
+        id: row._id,
+        channel: row.channel,
+        name: row.name,
+        userId: row.userId,
+        avatar: row.avatar ?? "",
+        updatedAt: new Date(row.updatedAt).toISOString(),
+      }));
   },
 });
 
@@ -161,6 +197,52 @@ export const add = mutation({
       createdAt: Date.now(),
       createdBy: userId,
     });
+  },
+});
+
+export const setTyping = mutation({
+  args: {
+    channel: v.string(),
+    name: v.string(),
+    avatar: v.optional(v.string()),
+    typing: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const channel = args.channel.trim().slice(0, 80);
+    if (!channel) {
+      throw new Error("Typing status needs a channel.");
+    }
+    const existing = await ctx.db
+      .query("chatTyping")
+      .withIndex("by_userId_and_channel", (q) =>
+        q.eq("userId", userId).eq("channel", channel),
+      )
+      .unique();
+
+    if (!args.typing) {
+      if (existing) {
+        await ctx.db.delete(existing._id);
+      }
+      return null;
+    }
+
+    const now = Date.now();
+    const payload = {
+      userId,
+      channel,
+      name: args.name.trim().slice(0, 120) || "Someone",
+      avatar: cleanAvatar(args.avatar),
+      updatedAt: now,
+      expiresAt: now + 6500,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return existing._id;
+    }
+
+    return await ctx.db.insert("chatTyping", payload);
   },
 });
 

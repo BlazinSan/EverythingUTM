@@ -2333,10 +2333,6 @@ export default function App() {
     "everything-utm:messages",
     [],
   );
-  const [typingSignals, setTypingSignals] = useLocalStorageState<TypingSignal[]>(
-    "everything-utm:typing-signals",
-    [],
-  );
   const [questions, setQuestions] = useLocalStorageState<Question[]>(
     "everything-utm:questions",
     [],
@@ -2421,6 +2417,7 @@ export default function App() {
   const adminMarkOnlineListingDeleted = useMutation(api.marketplace.adminMarkDeleted);
   const setOnlineListingSold = useMutation(api.marketplace.setSold);
   const addOnlineChatMessage = useMutation(api.chats.add);
+  const setOnlineChatTyping = useMutation(api.chats.setTyping);
   const updateOnlineChatContent = useMutation(api.chats.updateContent);
   const setOnlineChatEngagement = useMutation(api.chats.setEngagement);
   const removeOnlineChatMessage = useMutation(api.chats.remove);
@@ -2447,6 +2444,10 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
   const [activeChannel, setActiveChannel] = useState(chatChannels[0]);
+  const onlineTypingSignals = useQuery(
+    api.chats.listTyping,
+    isSignedIn ? { channel: activeChannel } : "skip",
+  ) as TypingSignal[] | undefined;
   const [messageDraft, setMessageDraft] = useState("");
   const [replyingToMessage, setReplyingToMessage] =
     useState<ChatMessage | null>(null);
@@ -2565,6 +2566,10 @@ export default function App() {
   const legacyCleanupStartedRef = useRef(false);
   const marketplaceSyncingIdsRef = useRef(new Set<string>());
   const marketplaceSyncedIdsRef = useRef(new Set<string>());
+  const lastTypingPingAtRef = useRef(0);
+  const lastTypingPresenceRef = useRef<{ channel: string; typing: boolean } | null>(
+    null,
+  );
   const messageSwipeRef = useRef<{ id: string; x: number; y: number } | null>(
     null,
   );
@@ -3461,47 +3466,66 @@ export default function App() {
   }, [onlineRequests, setRequests]);
 
   useEffect(() => {
-    if (!isSignedIn) {
-      return;
+    if (!isSignedIn || !convexAuthenticated) {
+      return undefined;
     }
     const hasPendingMessage =
       Boolean(messageDraft.trim()) ||
       messageAttachments.length > 0 ||
       Boolean(messageVoice);
-    const timer = window.setTimeout(() => {
-      setTypingSignals((current) => {
-        const freshSignals = current.filter(
-          (signal) =>
-            signal.userId !== currentUserId &&
-            Date.now() - new Date(signal.updatedAt).getTime() < 8000,
-        );
-        if (!hasPendingMessage) {
-          return freshSignals;
-        }
-        return [
-          {
-            id: `typing-${currentUserId}`,
-            channel: activeChannel,
-            name: currentDisplayName,
-            userId: currentUserId,
-            avatar: profileData.profilePicture,
-            updatedAt: new Date().toISOString(),
-          },
-          ...freshSignals,
-        ].slice(0, 30);
+
+    const publishTyping = (typing: boolean, channel = activeChannel) => {
+      lastTypingPresenceRef.current = { channel, typing };
+      lastTypingPingAtRef.current = Date.now();
+      void setOnlineChatTyping({
+        channel,
+        name: currentDisplayName,
+        avatar: safeRemoteMediaUrl(profileData.profilePicture) || undefined,
+        typing,
+      }).catch((error) => {
+        console.warn("Chat typing status could not sync", error);
       });
-    }, 350);
+    };
+
+    const previousPresence = lastTypingPresenceRef.current;
+    if (previousPresence?.typing && previousPresence.channel !== activeChannel) {
+      publishTyping(false, previousPresence.channel);
+    }
+
+    if (!hasPendingMessage) {
+      if (lastTypingPresenceRef.current?.typing) {
+        publishTyping(false);
+      }
+      return undefined;
+    }
+
+    const elapsed = Date.now() - lastTypingPingAtRef.current;
+    const isSameTypingChannel =
+      lastTypingPresenceRef.current?.typing &&
+      lastTypingPresenceRef.current.channel === activeChannel;
+    if (!isSameTypingChannel) {
+      publishTyping(true);
+      return undefined;
+    }
+
+    if (elapsed >= 2400) {
+      publishTyping(true);
+      return undefined;
+    }
+
+    const delay = 2400 - elapsed;
+    const timer = window.setTimeout(() => publishTyping(true), delay);
     return () => window.clearTimeout(timer);
   }, [
     activeChannel,
+    convexAuthenticated,
     currentDisplayName,
-    currentUserId,
     isSignedIn,
     messageAttachments.length,
     messageDraft,
     messageVoice,
     profileData.profilePicture,
-    setTypingSignals,
+    setOnlineChatTyping,
   ]);
 
   useEffect(() => {
@@ -3677,7 +3701,7 @@ export default function App() {
   const typingUsers = useMemo(() => {
     const now = Date.now();
     const seen = new Set<string>();
-    return typingSignals
+    return (onlineTypingSignals ?? [])
       .filter(
         (signal) =>
           signal.channel === activeChannel &&
@@ -3692,7 +3716,7 @@ export default function App() {
         return true;
       })
       .slice(0, 3);
-  }, [activeChannel, currentUserId, typingSignals]);
+  }, [activeChannel, currentUserId, onlineTypingSignals]);
 
   const visibleQuestions = useMemo(() => {
     const filtered = questions.filter((question) => {
@@ -4940,6 +4964,16 @@ export default function App() {
     setMessageAttachments([]);
     setReplyingToMessage(null);
     clearVoiceMessage();
+    lastTypingPresenceRef.current = { channel: activeChannel, typing: false };
+    lastTypingPingAtRef.current = Date.now();
+    void setOnlineChatTyping({
+      channel: activeChannel,
+      name: currentDisplayName,
+      avatar: safeRemoteMediaUrl(profileData.profilePicture) || undefined,
+      typing: false,
+    }).catch((error) => {
+      console.warn("Chat typing status could not clear", error);
+    });
 
     try {
       await syncChatMessageToCloud(message);
@@ -8465,15 +8499,16 @@ export default function App() {
               </div>
 
               {typingUsers.length > 0 && (
-                <div className="typing-indicator" aria-live="polite">
+                <div
+                  className="typing-indicator"
+                  aria-label={`${typingUsers[0].name} is typing`}
+                  aria-live="polite"
+                >
                   <PersonAvatar
                     image={typingUsers[0].avatar}
                     name={typingUsers[0].name}
                     size={26}
                   />
-                  <span>
-                    {typingUsers.map((entry) => entry.name).join(", ")} typing
-                  </span>
                   <i />
                   <i />
                   <i />

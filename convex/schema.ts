@@ -101,6 +101,17 @@ export default defineSchema({
     .index("by_messageId", ["messageId"])
     .index("by_channel_and_createdAt", ["channel", "createdAt"]),
 
+  chatTyping: defineTable({
+    userId: v.string(),
+    channel: v.string(),
+    name: v.string(),
+    avatar: v.optional(v.string()),
+    updatedAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_channel_and_expiresAt", ["channel", "expiresAt"])
+    .index("by_userId_and_channel", ["userId", "channel"]),
+
   serviceRequests: defineTable({
     requestId: v.string(),
     request: v.any(),
