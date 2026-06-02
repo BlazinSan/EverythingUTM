@@ -228,6 +228,20 @@ const MAX_UPLOAD_LABEL = "10 MB";
 const LISTING_IMAGE_MAX_SIDE = 640;
 const LISTING_IMAGE_QUALITY = 0.66;
 
+type ProfessorDirectoryEntry = {
+  id: string;
+  fullName: string;
+  faculty: string;
+  title?: string;
+  phone?: string;
+  email?: string;
+  office?: string;
+  picture?: string;
+  markingRating?: number;
+  attendanceRating?: number;
+  ethicsRating?: number;
+};
+
 const busAppliesToOptions = [
   "Regular semester campus shuttle service",
   "Weekday campus shuttle service",
@@ -252,6 +266,7 @@ const moduleSlugs: Record<ModuleKey, string> = {
   admin: "admin",
   settings: "settings",
   notifications: "notifications",
+  professors: "professor-directory",
 };
 
 const moduleKeysBySlug = Object.fromEntries(
@@ -2348,6 +2363,10 @@ export default function App() {
     "everything-utm:requests",
     [],
   );
+  const [professorDirectory] = useLocalStorageState<ProfessorDirectoryEntry[]>(
+    "everything-utm:professor-directory",
+    [],
+  );
   const remoteProfileRow = useQuery(
     api.profiles.getCurrent,
     isSignedIn ? {} : "skip",
@@ -2468,6 +2487,8 @@ export default function App() {
   const [requestDraft, setRequestDraft] = useState(initialRequest);
   const [requestSort, setRequestSort] =
     useState<(typeof requestSortOptions)[number]>("Date posted");
+  const [professorSearch, setProfessorSearch] = useState("");
+  const [professorFacultyFilter, setProfessorFacultyFilter] = useState("All");
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [pickupMapLocationId, setPickupMapLocationId] = useState("");
   const [dropoffMapLocationId, setDropoffMapLocationId] = useState("");
@@ -2554,8 +2575,12 @@ export default function App() {
   const [familyShuffleSeed, setFamilyShuffleSeed] = useState(() =>
     Math.floor(Math.random() * 1_000_000_000),
   );
+  const [bottomNavHidden, setBottomNavHidden] = useState(false);
   
   const [noticeTone, setNoticeTone] = useState<"success" | "error">("success");
+  const homeTapCountRef = useRef(0);
+  const lastHomeTapAtRef = useRef(0);
+  const homeTapResetRef = useRef(0);
   const longPressTimers = useRef<Record<string, number>>({});
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
@@ -2810,6 +2835,42 @@ export default function App() {
     },
     [familyProfiles, familyShuffleSeed],
   );
+  const professorFacultyOptions = useMemo(
+    () => [
+      "All",
+      ...Array.from(
+        new Set(
+          professorDirectory
+            .map((entry) => entry.faculty.trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    ],
+    [professorDirectory],
+  );
+  const visibleProfessors = useMemo(() => {
+    const normalizedSearch = normalize(professorSearch);
+    return professorDirectory
+      .filter((entry) => {
+        const matchesFaculty =
+          professorFacultyFilter === "All" ||
+          entry.faculty === professorFacultyFilter;
+        const haystack = normalize(
+          [
+            entry.fullName,
+            entry.title,
+            entry.faculty,
+            entry.phone,
+            entry.email,
+            entry.office,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+        return matchesFaculty && (!normalizedSearch || haystack.includes(normalizedSearch));
+      })
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }, [professorDirectory, professorFacultyFilter, professorSearch]);
   const reelItems = useMemo(
     () =>
       [...activeMarketplace]
@@ -4324,7 +4385,63 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let ticking = false;
+
+    const update = () => {
+      ticking = false;
+      if (!window.matchMedia?.("(max-width: 980px)").matches) {
+        setBottomNavHidden(false);
+        lastY = window.scrollY;
+        return;
+      }
+      const nextY = Math.max(0, window.scrollY);
+      const delta = nextY - lastY;
+      if (nextY < 24 || delta < -8) {
+        setBottomNavHidden(false);
+      } else if (delta > 10 && nextY > 80) {
+        setBottomNavHidden(true);
+      }
+      lastY = nextY;
+    };
+
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(update);
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", update);
+    update();
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
   function handleDashboardNav(item: NavItem) {
+    if (item.key === "home") {
+      const now = Date.now();
+      window.clearTimeout(homeTapResetRef.current);
+      homeTapCountRef.current =
+        now - lastHomeTapAtRef.current < 2400 ? homeTapCountRef.current + 1 : 1;
+      lastHomeTapAtRef.current = now;
+      homeTapResetRef.current = window.setTimeout(() => {
+        homeTapCountRef.current = 0;
+        lastHomeTapAtRef.current = 0;
+      }, 2400);
+      if (homeTapCountRef.current >= 5) {
+        homeTapCountRef.current = 0;
+        lastHomeTapAtRef.current = 0;
+        window.clearTimeout(homeTapResetRef.current);
+        showNotice("Professor directory unlocked");
+        navigateToModule("professors", { skipProfileGuard: true });
+        return;
+      }
+    }
     if (item.key === "profile") {
       openOwnProfile(activeModule === "profile" || profileSetupRequired);
       return;
@@ -6835,7 +6952,7 @@ export default function App() {
 
   return (
     <div
-      className="app-shell"
+      className={`app-shell ${bottomNavHidden ? "is-bottom-nav-hidden" : ""}`}
       onBlurCapture={() => {
         window.setTimeout(() => updateDestinationPreview(document.activeElement), 0);
       }}
@@ -7183,6 +7300,105 @@ export default function App() {
                 </div>
               </section>
             </div>
+          </section>
+        )}
+
+        {activeModule === "professors" && (
+          <section className="module professor-module">
+            <div className="module-heading">
+              <div>
+                <p className="eyebrow">Hidden academic directory</p>
+                <h1>Professor directory</h1>
+                <p>
+                  Search UTM professors by faculty, contact details, and student
+                  rating signals.
+                </p>
+              </div>
+              <button
+                className="secondary-button"
+                data-module-key="home"
+                type="button"
+                onClick={() => navigateToModule("home", { skipProfileGuard: true })}
+              >
+                <Home size={17} aria-hidden="true" />
+                Back home
+              </button>
+            </div>
+
+            <section className="panel professor-controls-panel">
+              <label className="search-box professor-search">
+                <Search size={18} aria-hidden="true" />
+                <input
+                  value={professorSearch}
+                  onChange={(event) => setProfessorSearch(event.target.value)}
+                  placeholder="Search professor name, phone, office, or email"
+                />
+              </label>
+              <label className="sort-control">
+                <GraduationCap size={16} aria-hidden="true" />
+                <span>Faculty</span>
+                <select
+                  value={professorFacultyFilter}
+                  onChange={(event) => setProfessorFacultyFilter(event.target.value)}
+                >
+                  {professorFacultyOptions.map((faculty) => (
+                    <option key={faculty}>{faculty}</option>
+                  ))}
+                </select>
+              </label>
+            </section>
+
+            <section className="professor-grid">
+              {visibleProfessors.length === 0 ? (
+                <EmptyState
+                  icon={GraduationCap}
+                  title="No professors added yet"
+                  body="Later, admin controls can add professor photos, phone numbers, faculties, offices, and ratings for marking, attendance, and ethics."
+                />
+              ) : (
+                visibleProfessors.map((professor) => (
+                  <article className="panel professor-card" key={professor.id}>
+                    <PersonAvatar
+                      image={professor.picture}
+                      name={professor.fullName}
+                      size={72}
+                    />
+                    <div className="professor-card-main">
+                      <span>{professor.faculty || "Faculty not shared"}</span>
+                      <h2>{professor.fullName}</h2>
+                      <p>{professor.title || "Professor"}</p>
+                      <div className="professor-contact-row">
+                        {professor.phone && (
+                          <a href={`tel:${professor.phone}`}>
+                            <Phone size={14} aria-hidden="true" />
+                            {professor.phone}
+                          </a>
+                        )}
+                        {professor.email && (
+                          <a href={`mailto:${professor.email}`}>
+                            <Send size={14} aria-hidden="true" />
+                            {professor.email}
+                          </a>
+                        )}
+                        {professor.office && <span>{professor.office}</span>}
+                      </div>
+                    </div>
+                    <div className="professor-rating-grid">
+                      {[
+                        ["Marking", professor.markingRating],
+                        ["Attendance", professor.attendanceRating],
+                        ["Ethics", professor.ethicsRating],
+                      ].map(([label, rating]) => (
+                        <span key={label}>
+                          <small>{label}</small>
+                          <strong>{typeof rating === "number" ? rating.toFixed(1) : "N/A"}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))
+              )}
+            </section>
           </section>
         )}
 

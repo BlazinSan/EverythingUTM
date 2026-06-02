@@ -1,8 +1,10 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@10..48,75..100,300..800&display=swap");
+
 :root {
   color-scheme: light;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    "Bricolage Grotesque", Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   --bg: #f6f4ef;
   --surface: #ffffff;
   --surface-strong: #fffaf1;
@@ -18,6 +20,15 @@
   --orange: #cc4b37;
   --violet: #6d5dfc;
   --shadow: 0 18px 50px rgba(34, 32, 39, 0.1);
+  --terracotta-espresso: #4e2c23;
+  --terracotta-peach: #e2725b;
+  --terracotta-apricot: #ffdab9;
+  --active-gradient: linear-gradient(
+    135deg,
+    var(--terracotta-espresso) 0%,
+    var(--terracotta-peach) 56%,
+    var(--terracotta-apricot) 118%
+  );
 }
 
 :root[data-theme="dark"] {
@@ -37,6 +48,7 @@
   --orange: #e16b55;
   --violet: #9e95ff;
   --shadow: 0 20px 54px rgba(0, 0, 0, 0.36);
+  --active-gradient: linear-gradient(135deg, #4e2c23 0%, #e2725b 58%, #ffdab9 126%);
 }
 
 :root[data-theme="dark"] .destination-preview {
@@ -412,7 +424,7 @@ img {
 
 .main-content {
   min-width: 0;
-  padding: 22px 28px 88px;
+  padding: 32px 34px 104px;
 }
 
 .app-footer {
@@ -439,10 +451,6 @@ img {
   grid-template-rows: auto minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
-}
-
-.main-content.is-chat-page .app-footer {
-  display: none;
 }
 
 .main-content.is-chat-page .topbar {
@@ -715,7 +723,7 @@ img {
 
 .module {
   display: grid;
-  gap: 20px;
+  gap: 28px;
   animation: pageForward 0.28s ease both;
 }
 
@@ -739,7 +747,7 @@ img {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 18px;
+  gap: 24px;
   min-width: 0;
 }
 
@@ -753,6 +761,12 @@ img {
   font-size: 34px;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.module-heading p:not(.eyebrow) {
+  max-width: 680px;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .eyebrow {
@@ -775,15 +789,15 @@ img {
 }
 
 .panel {
-  padding: 18px;
+  padding: 24px;
 }
 
 .panel-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .panel-heading h2 {
@@ -823,6 +837,18 @@ img {
   background: var(--utm-red-dark);
 }
 
+.primary-button:active,
+.secondary-button:active,
+.ghost-button:active,
+.chip:active,
+.metric-button:active,
+.nav-item:active,
+.rb-dock-item:active {
+  background: var(--active-gradient);
+  border-color: rgba(226, 114, 91, 0.72);
+  box-shadow: 0 12px 28px rgba(78, 44, 35, 0.24);
+}
+
 .secondary-button {
   color: var(--utm-red);
   background: #fff4f1;
@@ -835,8 +861,8 @@ img {
 
 .secondary-button.is-selected {
   color: #fff;
-  background: var(--utm-red);
-  border-color: var(--utm-red);
+  background: var(--active-gradient);
+  border-color: rgba(226, 114, 91, 0.72);
 }
 
 .ghost-button {
@@ -856,8 +882,8 @@ img {
 .chip.is-active,
 .chip:hover {
   color: #fff;
-  background: var(--text);
-  border-color: var(--text);
+  background: var(--active-gradient);
+  border-color: rgba(226, 114, 91, 0.72);
 }
 
 .full-width {
@@ -3351,6 +3377,117 @@ textarea:focus {
   gap: 12px;
 }
 
+.professor-module {
+  align-content: start;
+}
+
+.professor-controls-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px);
+  align-items: center;
+  gap: 18px;
+}
+
+.professor-search {
+  margin: 0;
+}
+
+.professor-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.professor-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(260px, 0.52fr);
+  align-items: center;
+  gap: 20px;
+}
+
+.professor-card .person-avatar {
+  border-radius: 999px;
+}
+
+.professor-card-main {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.professor-card-main > span {
+  width: fit-content;
+  padding: 4px 9px;
+  color: var(--utm-teal);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  background: rgba(0, 133, 111, 0.1);
+  border: 1px solid rgba(0, 133, 111, 0.22);
+  border-radius: 999px;
+}
+
+.professor-card-main h2,
+.professor-card-main p {
+  margin: 0;
+}
+
+.professor-card-main h2 {
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.05;
+}
+
+.professor-card-main p {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.professor-contact-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.professor-contact-row a,
+.professor-contact-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.professor-rating-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.professor-rating-grid span {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: center;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.professor-rating-grid small {
+  color: var(--muted);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.professor-rating-grid strong {
+  font-size: 24px;
+}
+
 .dock-nav {
   position: relative;
   display: block;
@@ -3430,13 +3567,13 @@ textarea:focus {
   }
 
   .dock-nav .rb-dock-item::before {
-    background: linear-gradient(45deg, var(--utm-red), var(--utm-teal));
+    background: var(--active-gradient);
   }
 
   .dock-nav .rb-dock-item::after {
     top: 9px;
     filter: blur(15px);
-    background: linear-gradient(45deg, var(--utm-red), var(--utm-teal));
+    background: var(--active-gradient);
   }
 
   .dock-nav .rb-dock-item:hover,
@@ -4103,6 +4240,15 @@ textarea:focus {
     border-top: 1px solid rgba(255, 255, 255, 0.16);
     border-right: 0;
     box-shadow: 0 -18px 40px rgba(34, 32, 39, 0.22);
+    transition:
+      transform 0.28s ease,
+      opacity 0.28s ease;
+  }
+
+  .app-shell.is-bottom-nav-hidden .sidebar {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(calc(100% + 18px));
   }
 
   .sidebar .brand,
@@ -4189,7 +4335,7 @@ textarea:focus {
   }
 
   .main-content {
-    padding: 18px 18px 158px;
+    padding: 24px 20px 158px;
   }
 
   .app-footer {
@@ -4200,8 +4346,8 @@ textarea:focus {
   }
 
   .main-content.is-chat-page {
-    height: calc(100dvh - 92px - env(safe-area-inset-bottom));
-    padding-bottom: 8px;
+    height: calc(100dvh - 138px - env(safe-area-inset-bottom));
+    padding-bottom: 10px;
     overflow: hidden;
   }
 
@@ -4283,6 +4429,15 @@ textarea:focus {
 
   .map-action-row {
     grid-template-columns: 1fr;
+  }
+
+  .professor-controls-panel,
+  .professor-card {
+    grid-template-columns: 1fr;
+  }
+
+  .professor-rating-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .chat-module {
@@ -4411,6 +4566,15 @@ textarea:focus {
     border-top: 1px solid rgba(255, 255, 255, 0.16);
     border-right: 0;
     box-shadow: 0 -18px 40px rgba(34, 32, 39, 0.22);
+    transition:
+      transform 0.28s ease,
+      opacity 0.28s ease;
+  }
+
+  .app-shell.is-bottom-nav-hidden .sidebar {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(calc(100% + 18px));
   }
 
   .main-content {
@@ -4818,9 +4982,9 @@ textarea:focus {
   .main-content.is-chat-page {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    height: calc(100dvh - 92px - env(safe-area-inset-bottom));
+    height: calc(100dvh - 138px - env(safe-area-inset-bottom));
     overflow: hidden;
-    padding-bottom: 8px;
+    padding-bottom: 10px;
   }
 
   .main-content.is-chat-page .topbar {

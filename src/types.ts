@@ -20,7 +20,8 @@ export type ModuleKey =
   | "profile"
   | "admin"
   | "settings"
-  | "notifications";
+  | "notifications"
+  | "professors";
 
 export type NavItem = {
   key: ModuleKey;
